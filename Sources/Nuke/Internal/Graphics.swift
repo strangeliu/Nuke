@@ -322,6 +322,9 @@ enum Screen {
 #elseif os(watchOS)
     /// Returns the current screen scale.
     static let scale: CGFloat = WKInterfaceDevice.current().screenScale
+#elseif os(macOS)
+    /// Always returns 2.
+    static let scale: CGFloat = 2
 #else
     /// Always returns 1.
     static let scale: CGFloat = 1
