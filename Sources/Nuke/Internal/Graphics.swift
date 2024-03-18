@@ -429,6 +429,9 @@ enum Screen {
     /// - note: unlike `UITraitCollection.current`, `WKInterfaceDevice` reports
     /// the scale of the device regardless of the context, so it's safe to cache.
     static let scale: CGFloat = max(1, WKInterfaceDevice.current().screenScale)
+#elseif os(macOS)
+    /// Always returns 2.
+    static let scale: CGFloat = 2
 #else
     /// Always returns 1.
     static let scale: CGFloat = 1
