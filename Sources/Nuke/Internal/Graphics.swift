@@ -432,6 +432,9 @@ enum Screen {
 #elseif os(macOS)
     /// Always returns 2.
     static let scale: CGFloat = 2
+#elseif os(visionOS)
+    /// Returns the current trait collection scale.
+    static let scale: CGFloat = UITraitCollection.current.displayScale
 #else
     /// Always returns 1.
     static let scale: CGFloat = 1
