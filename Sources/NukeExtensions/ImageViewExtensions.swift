@@ -216,15 +216,15 @@ private final class ImageViewController {
 
     // MARK: - Associating Controller
 
-    static var controllerAK: UInt8 = 0
+    static let controllerAK = malloc(1)!
 
     // Lazily create a controller for a given view and associate it with a view.
     static func controller(for view: ImageDisplayingView) -> ImageViewController {
-        if let controller = objc_getAssociatedObject(view, &ImageViewController.controllerAK) as? ImageViewController {
+        if let controller = objc_getAssociatedObject(view, controllerAK) as? ImageViewController {
             return controller
         }
         let controller = ImageViewController(view: view)
-        objc_setAssociatedObject(view, &ImageViewController.controllerAK, controller, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        objc_setAssociatedObject(view, controllerAK, controller, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return controller
     }
 
@@ -400,7 +400,7 @@ extension ImageViewController {
         )
     }
 
-    /// Performs cross-dissolve animation alonside transition to a new content
+    /// Performs cross-dissolve animation alongside transition to a new content
     /// mode. This isn't natively supported feature and it requires a second
     /// image view. There might be better ways to implement it.
     private func runCrossDissolveWithContentMode(imageView: UIImageView, image: ImageContainer, params: ImageLoadingOptions.Transition.Parameters) {
@@ -410,8 +410,19 @@ extension ImageViewController {
         // Create a transition view which mimics current view's contents.
         transitionView.image = imageView.image
         transitionView.contentMode = imageView.contentMode
-        imageView.addSubview(transitionView)
-        transitionView.frame = imageView.bounds
+        transitionView.frame = imageView.frame
+        transitionView.tintColor = imageView.tintColor
+        transitionView.tintAdjustmentMode = imageView.tintAdjustmentMode
+        #if swift(>=5.9) // preferredImageDynamicRange was back-ported to all iOS/tvOS versions, but only available when using the iOS/tvOS 17+ SDKs
+        transitionView.preferredImageDynamicRange = imageView.preferredImageDynamicRange
+        #endif
+        transitionView.preferredSymbolConfiguration = imageView.preferredSymbolConfiguration
+        transitionView.isHidden = imageView.isHidden
+        transitionView.clipsToBounds = imageView.clipsToBounds
+        transitionView.layer.cornerRadius = imageView.layer.cornerRadius
+        transitionView.layer.cornerCurve = imageView.layer.cornerCurve
+        transitionView.layer.maskedCorners = imageView.layer.maskedCorners
+        imageView.superview?.insertSubview(transitionView, aboveSubview: imageView)
 
         // "Manual" cross-fade.
         transitionView.alpha = 1
@@ -426,9 +437,10 @@ extension ImageViewController {
                 transitionView.alpha = 0
                 imageView.alpha = 1
             },
-            completion: { isCompleted in
-                if isCompleted {
+            completion: { [weak transitionView] isCompleted in
+                if isCompleted, let transitionView {
                     transitionView.removeFromSuperview()
+                    transitionView.image = nil
                 }
             }
         )
