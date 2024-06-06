@@ -131,7 +131,6 @@ private final class _DataLoader: NSObject, URLSessionDataDelegate {
         session.delegateQueue.addOperation { // `URLSession` is configured to use this same queue
             self.handlers[task] = handler
         }
-        task.taskDescription = "Nuke Load Data"
         task.resume()
         return AnonymousCancellable { task.cancel() }
     }
@@ -218,7 +217,7 @@ private final class _DataLoader: NSObject, URLSessionDataDelegate {
 
     // MARK: Internal
 
-    private final class _Handler {
+    private final class _Handler: @unchecked Sendable {
         let didReceiveData: (Data, URLResponse) -> Void
         let completion: (Error?) -> Void
 
