@@ -105,6 +105,10 @@ public struct LazyImage<Content: View>: View {
     public consuming func processors(_ processors: [any ImageProcessing]?) -> Self {
         map { $0.context?.request.processors = processors ?? [] }
     }
+    
+    public func processors(_ processors: (any ImageProcessing)...) -> Self {
+        map { $0.context?.request.processors = processors }
+    }
 
     /// Sets the priority of the requests.
     public consuming func priority(_ priority: ImageRequest.Priority?) -> Self {
