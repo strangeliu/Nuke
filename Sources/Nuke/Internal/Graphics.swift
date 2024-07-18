@@ -244,9 +244,22 @@ extension CGImagePropertyOrientation {
         }
     }
 }
-#endif
 
-#if canImport(UIKit)
+extension UIImage.Orientation {
+    init(_ cgOrientation: CGImagePropertyOrientation) {
+        switch cgOrientation {
+        case .up: self = .up
+        case .upMirrored: self = .upMirrored
+        case .down: self = .down
+        case .downMirrored: self = .downMirrored
+        case .left: self = .left
+        case .leftMirrored: self = .leftMirrored
+        case .right: self = .right
+        case .rightMirrored: self = .rightMirrored
+        }
+    }
+}
+
 private extension CGSize {
     func rotatedForOrientation(_ imageOrientation: CGImagePropertyOrientation) -> CGSize {
         switch imageOrientation {
@@ -354,7 +367,10 @@ extension Color {
 }
 
 /// Creates an image thumbnail. Uses significantly less memory than other options.
-func makeThumbnail(data: Data, options: ImageRequest.ThumbnailOptions) -> PlatformImage? {
+/// - parameter data: Data object from which to read the image.
+/// - parameter options: Image loading options.
+/// - parameter scale: The scale factor to assume when interpreting the image data, defaults to 1.
+func makeThumbnail(data: Data, options: ImageRequest.ThumbnailOptions, scale: CGFloat = 1.0) -> PlatformImage? {
     guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
         return nil
     }
@@ -369,7 +385,18 @@ func makeThumbnail(data: Data, options: ImageRequest.ThumbnailOptions) -> Platfo
     guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
         return nil
     }
+
+#if canImport(UIKit)
+    var orientation: UIImage.Orientation = .up
+    if let imageProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [AnyHashable: Any],
+       let orientationValue = imageProperties[kCGImagePropertyOrientation as String] as? UInt32,
+       let cgOrientation = CGImagePropertyOrientation(rawValue: orientationValue) {
+        orientation = UIImage.Orientation(cgOrientation)
+    }
+    return PlatformImage(cgImage: image, scale: scale, orientation: orientation)
+#else
     return PlatformImage(cgImage: image)
+#endif
 }
 
 private func getMaxPixelSize(for source: CGImageSource, options thumbnailOptions: ImageRequest.ThumbnailOptions) -> CGFloat {
