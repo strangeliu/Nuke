@@ -6,6 +6,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import os
+import SwiftUI
 
 #if os(watchOS)
 import WatchKit.WKInterfaceDevice
@@ -107,7 +108,7 @@ struct ImageProcessingExtensions {
     /// Adds rounded corners with the given radius to the image.
     /// - parameter radius: Radius in pixels.
     /// - parameter border: Optional stroke border.
-    func byAddingRoundedCorners(radius: CGFloat, border: ImageProcessingOptions.Border? = nil) -> PlatformImage? {
+    func byAddingRoundedCorners(radius: CGFloat, continuousStyle: Bool = true, border: ImageProcessingOptions.Border? = nil) -> PlatformImage? {
         guard let cgImage = image.cgImage else {
             return nil
         }
@@ -115,7 +116,13 @@ struct ImageProcessingExtensions {
             return nil
         }
         let rect = CGRect(origin: CGPoint.zero, size: cgImage.size)
-        let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        let path: CGPath
+        if continuousStyle {
+            path = RoundedRectangle(cornerRadius: radius, style: .continuous).path(in: rect).cgPath
+        } else {
+            path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        }
+        
         ctx.addPath(path)
         ctx.clip()
         ctx.draw(cgImage, in: CGRect(origin: CGPoint.zero, size: cgImage.size))
