@@ -17,7 +17,14 @@ extension ImageProcessors {
     /// - important: In order for the corners to be displayed correctly, the image must exactly match the size
     /// of the image view in which it will be displayed. See ``ImageProcessors/Resize`` for more info.
     public struct RoundedCorners: ImageProcessing, Hashable, CustomStringConvertible {
+        
+        public enum Style: String, Hashable, Sendable {
+            case circular
+            case continuous
+        }
+        
         private let radius: CGFloat
+        private let style: Style
         private let border: ImageProcessingOptions.Border?
 
         /// Initializes the processor with the given radius.
@@ -26,22 +33,23 @@ extension ImageProcessors {
         ///   - radius: The radius of the corners.
         ///   - unit: Unit of the radius.
         ///   - border: An optional border drawn around the image.
-        public init(radius: CGFloat, unit: ImageProcessingOptions.Unit = .points, border: ImageProcessingOptions.Border? = nil) {
+        public init(radius: CGFloat, unit: ImageProcessingOptions.Unit = .points, style: Style = .continuous, border: ImageProcessingOptions.Border? = nil) {
             self.radius = radius.converted(to: unit)
+            self.style = style
             self.border = border
         }
 
         public func process(_ image: PlatformImage) -> PlatformImage? {
-            image.processed.byAddingRoundedCorners(radius: radius, border: border)
+            image.processed.byAddingRoundedCorners(radius: radius, continuousStyle: style == .continuous, border: border)
         }
 
         public var identifier: String {
             let suffix = border.map { ",border=\($0)" }
-            return "com.github.kean/nuke/rounded_corners?radius=\(radius)" + (suffix ?? "")
+            return "com.github.kean/nuke/rounded_corners?radius=\(radius)&style=\(style.rawValue)" + (suffix ?? "")
         }
 
         public var description: String {
-            "RoundedCorners(radius: \(radius) pixels, border: \(border?.description ?? "nil"))"
+            "RoundedCorners(radius: \(radius) pixels, style: \(style.rawValue), border: \(border?.description ?? "nil"))"
         }
     }
 }
