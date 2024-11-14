@@ -22,7 +22,7 @@ public struct LazyImage<Content: View>: View {
 
     private var context: LazyImageContext?
     private var makeContent: ((LazyImageState) -> Content)?
-    private var transaction: Transaction
+//    private var transaction: Transaction
     private var pipeline: ImagePipeline = .shared
     private var onStart: ((ImageTask) -> Void)?
     private var onDisappearBehavior: DisappearBehavior? = .cancel
@@ -44,16 +44,16 @@ public struct LazyImage<Content: View>: View {
     ///   - request: The image request.
     public init(request: ImageRequest?) where Content == Image {
         self.context = request.map(LazyImageContext.init)
-        self.transaction = Transaction(animation: nil)
+//        self.transaction = Transaction(animation: nil)
     }
 
     /// Loads an images and displays custom content for each state.
     ///
     /// See also ``init(request:transaction:content:)``
     public init(url: URL?,
-                transaction: Transaction = Transaction(animation: nil),
+//                transaction: Transaction = Transaction(animation: nil),
                 @ViewBuilder content: @escaping (LazyImageState) -> Content) {
-        self.init(request: url.map { ImageRequest(url: $0) }, transaction: transaction, content: content)
+        self.init(request: url.map { ImageRequest(url: $0) }, content: content)
     }
 
     /// Loads an images and displays custom content for each state.
@@ -74,10 +74,10 @@ public struct LazyImage<Content: View>: View {
     /// }
     /// ```
     public init(request: ImageRequest?,
-                transaction: Transaction = Transaction(animation: nil),
+//                transaction: Transaction = Transaction(animation: nil),
                 @ViewBuilder content: @escaping (LazyImageState) -> Content) {
         self.context = request.map { LazyImageContext(request: $0) }
-        self.transaction = transaction
+//        self.transaction = transaction
         self.makeContent = content
     }
 
@@ -161,7 +161,7 @@ public struct LazyImage<Content: View>: View {
     }
 
     private func onAppear() {
-        viewModel.transaction = transaction
+//        viewModel.transaction = transaction
         viewModel.pipeline = pipeline
         viewModel.onStart = onStart
         viewModel.onCompletion = onCompletion

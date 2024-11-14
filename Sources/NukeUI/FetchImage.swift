@@ -134,9 +134,9 @@ public final class FetchImage: ObservableObject, Identifiable {
             progress: { [weak self] response, completed, total in
                 guard let self else { return }
                 if let response {
-                    withTransaction(self.transaction) {
+//                    withTransaction(self.transaction) {
                         self.handle(preview: response)
-                    }
+//                    }
                 } else {
                     self._progress?.completed = completed
                     self._progress?.total = total
@@ -144,9 +144,9 @@ public final class FetchImage: ObservableObject, Identifiable {
             },
             completion: { [weak self] result in
                 guard let self else { return }
-                withTransaction(self.transaction) {
+//                withTransaction(self.transaction) {
                     self.handle(result: result.mapError { $0 })
-                }
+//                }
             }
         )
         imageTask = task
@@ -181,9 +181,9 @@ public final class FetchImage: ObservableObject, Identifiable {
         let task = Task {
             do {
                 let response = try await action()
-                withTransaction(transaction) {
+//                withTransaction(transaction) {
                     handle(result: .success(response))
-                }
+//                }
             } catch {
                 handle(result: .failure(error))
             }
