@@ -1,25 +1,28 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
 @testable import Nuke
 
-class ImagePipelineProgressiveDecodingTests: XCTestCase {
-    private var dataLoader: MockProgressiveDataLoader!
-    private var pipeline: ImagePipeline!
-    private var cache: MockImageCache!
-    private var processorsFactory: MockProcessorFactory!
-    
-    override func setUp() {
-        super.setUp()
-        
-        dataLoader = MockProgressiveDataLoader()
-        ResumableDataStorage.shared.removeAllResponses()
-        
-        cache = MockImageCache()
-        processorsFactory = MockProcessorFactory()
-        
+@Suite(.timeLimit(.minutes(2)))
+struct ImagePipelineProgressiveDecodingTests {
+    private let dataLoader: MockProgressiveDataLoader
+    private let pipeline: ImagePipeline
+    private let cache: MockImageCache
+    private let processorsFactory: MockProcessorFactory
+
+    init() {
+        let dataLoader = MockProgressiveDataLoader()
+
+        let cache = MockImageCache()
+        let processorsFactory = MockProcessorFactory()
+
+        self.dataLoader = dataLoader
+        self.cache = cache
+        self.processorsFactory = processorsFactory
+
         // We make two important assumptions with this setup:
         //
         // 1. Image processing is serial which means that all partial images are
@@ -29,277 +32,226 @@ class ImagePipelineProgressiveDecodingTests: XCTestCase {
         //
         // 2. Each data chunk produced by a data loader always results in a new
         // scan. The way we split the data guarantees that.
-        
-        pipeline = ImagePipeline {
+
+        self.pipeline = ImagePipeline {
             $0.dataLoader = dataLoader
             $0.imageCache = cache
             $0.isProgressiveDecodingEnabled = true
             $0.isStoringPreviewsInMemoryCache = true
-            $0.imageProcessingQueue.maxConcurrentOperationCount = 1
+            $0.progressiveDecodingInterval = 0
+            $0.imageProcessingQueue = TaskQueue(maxConcurrentOperationCount: 1)
         }
     }
-    
+
     // MARK: - Basics
-    
-    // Very basic test, just make sure that partial images get produced and
-    // that the completion handler is called at the end.
-    func testProgressiveDecoding() {
+
+    @Test func progressiveDecoding() async throws {
         // Given
         // - An image which supports progressive decoding
         // - A pipeline with progressive decoding enabled
-        
-        // Then two scans are produced
-        let expectPartialImageProduced = self.expectation(description: "Partial Image Is Produced")
-        expectPartialImageProduced.expectedFulfillmentCount = 2
-        
-        // Then the final image is produced
-        let expectFinalImageProduced = self.expectation(description: "Final Image Is Produced")
-        
+
         // When
-        pipeline.loadImage(
-            with: Test.request,
-            progress: { response, _, _ in
-                // This works because each new chunk resulted in a new scan
-                if let container = response?.container {
-                    // Then image previews are produced
-                    XCTAssertTrue(container.isPreview)
-                    
-                    // Then the preview is stored in memory cache
-                    let cached = self.cache[Test.request]
-                    XCTAssertNotNil(cached)
-                    XCTAssertTrue(cached?.isPreview ?? false)
-                    XCTAssertEqual(cached?.image, container.image)
-                    
-                    expectPartialImageProduced.fulfill()
-                    self.dataLoader.resume()
-                }
-            },
-            completion: { result in
-                // Then the final image is produced
-                switch result {
-                case let .success(response):
-                    XCTAssertFalse(response.container.isPreview)
-                case .failure:
-                    XCTFail("Unexpected failure")
-                }
-                
-                // Then the preview is overwritted with the final image in memory cache
-                let cached = self.cache[Test.request]
-                XCTAssertNotNil(cached)
-                XCTAssertFalse(cached?.isPreview ?? false)
-                XCTAssertEqual(cached?.image, result.value?.image)
-                
-                expectFinalImageProduced.fulfill()
-            }
-        )
-        
-        wait()
+        var recordedPreviews: [ImageResponse] = []
+        let task = pipeline.imageTask(with: Test.request)
+        for try await preview in task.previews {
+            // Then image previews are produced
+            #expect(preview.container.isPreview)
+
+            // Then the preview is stored in memory cache
+            let cached = cache[Test.request]
+            #expect(cached != nil)
+            #expect(cached?.isPreview == true)
+            #expect(cached?.image == preview.container.image)
+
+            recordedPreviews.append(preview)
+            dataLoader.resume()
+        }
+        let response = try await task.response
+
+        // Then two scans are produced
+        #expect(recordedPreviews.count == 2)
+
+        // Then the final image is produced
+        #expect(!response.container.isPreview)
+
+        // Then the preview is overwritten with the final image in memory cache
+        let cached = cache[Test.request]
+        #expect(cached != nil)
+        #expect(cached?.isPreview == false)
+        #expect(cached?.image == response.image)
     }
-    
-    func testThatFailedPartialImagesAreIgnored() {
+
+    @Test func failedPartialImagesAreIgnored() async throws {
         // Given
         class FailingPartialsDecoder: ImageDecoding, @unchecked Sendable {
             func decode(_ data: Data) throws -> ImageContainer {
                 try ImageDecoders.Default().decode(data)
             }
         }
-        
+
         let registry = ImageDecoderRegistry()
-        
         registry.register { _ in
             FailingPartialsDecoder()
         }
-        
-        pipeline = pipeline.reconfigured {
+
+        let pipeline = pipeline.reconfigured {
             $0.makeImageDecoder = { registry.decoder(for: $0) }
         }
-        
+
         // When/Then
-        let finalLoaded = self.expectation(description: "Final image loaded")
-        
-        pipeline.loadImage(
-            with: Test.request,
-            progress: { image, _, _ in
-                XCTAssertNil(image, "Expected partial images to never be produced") // Partial images never produced.
-                self.dataLoader.resume()
-            },
-            completion: { result in
-                XCTAssertTrue(result.isSuccess, "Expected the final image to be produced")
-                finalLoaded.fulfill()
+        let task = pipeline.imageTask(with: Test.request)
+
+        // Subscribe to both streams synchronously before suspending to avoid a
+        // race where the background task starts too late and misses the first
+        // progress event (which is served automatically on the main queue).
+        let dataLoader = self.dataLoader
+        let progressEvents = task.progress
+        let previewEvents = task.previews
+
+        Task {
+            for await _ in progressEvents {
+                dataLoader.resume()
             }
-        )
-        
-        wait()
+        }
+
+        var recordedPreviews: [ImageResponse] = []
+        for try await preview in previewEvents {
+            recordedPreviews.append(preview)
+            dataLoader.resume()
+        }
+        let response = try await task.response
+
+        // Then partial images are never produced
+        #expect(recordedPreviews.isEmpty)
+        // Then the final image is produced
+        #expect(!response.isPreview)
     }
-    
+
     // MARK: - Image Processing
-    
+
 #if !os(macOS)
-    func testThatPartialImagesAreResized() {
+    @Test func partialImagesAreResized() async throws {
         // Given
         let image = PlatformImage(data: dataLoader.data)
-        XCTAssertEqual(image?.cgImage?.width, 450)
-        XCTAssertEqual(image?.cgImage?.height, 300)
-        
+        #expect(image?.cgImage?.width == 450)
+        #expect(image?.cgImage?.height == 300)
+
         let request = ImageRequest(
             url: Test.url,
             processors: [ImageProcessors.Resize(size: CGSize(width: 45, height: 30), unit: .pixels)]
         )
-        
-        // When/Then
-        expect(pipeline, dataLoader).toProducePartialImages(
-            for: request,
-            progress: { response, _, _ in
-                if let image = response?.image {
-                    XCTAssertEqual(image.cgImage?.width, 45, "Expected progressive image to be resized")
-                    XCTAssertEqual(image.cgImage?.height, 30, "Expected progressive image to be resized")
-                }
-            },
-            completion: { result in
-                XCTAssertTrue(result.isSuccess, "Expected the final image to be produced")
-                let image = result.value?.image
-                XCTAssertEqual(image?.cgImage?.width, 45, "Expected the final image to be resized")
-                XCTAssertEqual(image?.cgImage?.height, 30, "Expected the final image to be resized")
-            }
-        )
-        
-        wait()
+
+        // When
+        var recordedPreviews: [ImageResponse] = []
+        let task = pipeline.imageTask(with: request)
+        for try await preview in task.previews {
+            #expect(preview.image.cgImage?.width == 45)
+            #expect(preview.image.cgImage?.height == 30)
+            recordedPreviews.append(preview)
+            dataLoader.resume()
+        }
+        let response = try await task.response
+
+        // Then
+        #expect(recordedPreviews.count == 2)
+        #expect(response.image.cgImage?.width == 45)
+        #expect(response.image.cgImage?.height == 30)
     }
 #endif
-    
-    func testThatPartialImagesAreProcessed() {
+
+    @Test func partialImagesAreProcessed() async throws {
         // Given
         let request = ImageRequest(url: Test.url, processors: [MockImageProcessor(id: "_image_processor")])
-        
-        // When/Then
-        expect(pipeline, dataLoader).toProducePartialImages(
-            for: request,
-            progress: { response, _, _ in
-                if let image = response?.image {
-                    XCTAssertEqual(image.nk_test_processorIDs.count, 1)
-                    XCTAssertEqual(image.nk_test_processorIDs.first, "_image_processor")
-                }
-            },
-            completion: { result in
-                let image = result.value?.image
-                XCTAssertEqual(image?.nk_test_processorIDs.count, 1)
-                XCTAssertEqual(image?.nk_test_processorIDs.first, "_image_processor")
-            }
-        )
-        wait()
+
+        // When
+        var recordedPreviews: [ImageResponse] = []
+        let task = pipeline.imageTask(with: request)
+        for try await preview in task.previews {
+            #expect(preview.image.nk_test_processorIDs.count == 1)
+            #expect(preview.image.nk_test_processorIDs.first == "_image_processor")
+            recordedPreviews.append(preview)
+            dataLoader.resume()
+        }
+        let response = try await task.response
+
+        // Then
+        #expect(recordedPreviews.count == 2)
+        #expect(response.image.nk_test_processorIDs.count == 1)
+        #expect(response.image.nk_test_processorIDs.first == "_image_processor")
     }
-    
-    func testProgressiveDecodingDisabled() {
+
+    @Test func progressiveDecodingDisabled() async throws {
         // Given
         var configuration = pipeline.configuration
         configuration.isProgressiveDecodingEnabled = false
-        pipeline = ImagePipeline(configuration: configuration)
-        
-        // When/Then
-        let expectFinalImageProduced = self.expectation(description: "Final Image Is Produced")
-        pipeline.loadImage(
-            with: Test.request,
-            progress: { response, _, _ in
-                XCTAssertNil(response, "Expected partial images to never be produced")
-                self.dataLoader.resume()
-            },
-            completion: { result in
-                XCTAssertTrue(result.isSuccess)
-                expectFinalImageProduced.fulfill()
+        let pipeline = ImagePipeline(configuration: configuration)
+
+        // When
+        let task = pipeline.imageTask(with: Test.request)
+
+        // Subscribe to both streams synchronously before suspending to avoid a
+        // race where the background task starts too late and misses the first
+        // progress event (which is served automatically on the main queue).
+        let dataLoader = self.dataLoader
+        let progressEvents = task.progress
+        let previewEvents = task.previews
+        Task {
+            for await _ in progressEvents {
+                dataLoader.resume()
             }
-        )
-        wait()
+        }
+
+        var recordedPreviews: [ImageResponse] = []
+        for try await preview in previewEvents {
+            recordedPreviews.append(preview)
+            dataLoader.resume()
+        }
+        let response = try await task.response
+
+        // Then partial images are never produced
+        #expect(recordedPreviews.isEmpty)
+        #expect(!response.isPreview)
     }
-    
+
     // MARK: Back Pressure
-    
-    func testBackpressureImageDecoding() {
+
+    @Test @ImagePipelineActor func backpressureImageDecoding() async throws {
         // GIVEN
-        pipeline = pipeline.reconfigured {
+        let pipeline = pipeline.reconfigured {
             $0.makeImageDecoder = { _ in MockImageDecoder(name: "a") }
         }
-        
+
         let queue = pipeline.configuration.imageDecodingQueue
-        
-        // When we receive progressive image data at a higher rate that we can
-        // process (we suspended the queue in test) we don't try to process
-        // new scans until we finished processing the first one.
-        
         queue.isSuspended = true
-        expect(queue).toFinishWithEnqueuedOperationCount(2) // 1 partial, 1 final
-        
-        let finalLoaded = self.expectation(description: "Final image produced")
-        
-        let request = ImageRequest(url: Test.url, processors: [ImageProcessors.Anonymous(id: "1", { $0 })])
-        pipeline.loadImage(
-            with: request,
-            progress: { image, _, _ in
-                if image != nil {
-                    // We don't expect partial to finish, because as soon as
-                    // we create operation to create final image, partial
-                    // operations is going to be finished before even starting
-                }
-                self.dataLoader.resume()
-            },
-            completion: { result in
-                XCTAssertTrue(result.isSuccess)
-                finalLoaded.fulfill()
+
+        let dataLoader = dataLoader
+        let expectation = TestExpectation(queue: queue, count: 2)
+        let task = pipeline.imageTask(with: ImageRequest(url: Test.url, processors: [ImageProcessors.Anonymous(id: "1", { $0 })]))
+        let previewEvents = task.previews
+        let progressEvents = task.progress
+        Task {
+            for try await _ in previewEvents {
+                dataLoader.resume()
             }
-        )
-        
-        wait()
-    }
-    
-    func testBackpressureProcessingImageProcessingOperationCancelled() throws {
-        // Given
-        let imageProcessingQueue = pipeline.configuration.imageProcessingQueue
-        imageProcessingQueue.isSuspended = true
-        
-        // When the first chunk is delivered
-        // Then the first processing operation is enqueue
-        let observer = expect(imageProcessingQueue).toEnqueueOperationsWithCount(1)
-        
-        let imageLoadCompleted = NSNotification.Name(rawValue: "ImageLoadCompleted")
-        
-        let request = ImageRequest(url: Test.url, processors: [ImageProcessors.Anonymous(id: "1", { $0 })])
-        pipeline.loadImage(
-            with: request,
-            progress: { _, _, _ in
-                
-            },
-            completion: { result in
-                XCTAssertTrue(result.isSuccess)
-                NotificationCenter.default.post(name: imageLoadCompleted, object: nil)
+        }
+        Task {
+            for await _ in progressEvents {
+                dataLoader.resume()
             }
-        )
-        wait()
-        
-        // When the second chunk is deliverd, the new operation
-        // is not created
-        dataLoader.serveNextChunk()
-        let expectation = self.expectation(description: "NoOperationCreated")
-        expectation.isInverted = true
-        wait(for: [expectation], timeout: 0.2)
-        
-        XCTAssertEqual(imageProcessingQueue.operationCount, 1)
-        
-        // When last chunk is delivered, initial processing
-        // operation is cancelled
-        let operation = try XCTUnwrap(observer.operations.first)
-        expect(operation).toCancel()
-        
-        dataLoader.serveNextChunk()
-        wait()
-        
-        // Then final image is loaded
-        expectNotification(imageLoadCompleted)
-        imageProcessingQueue.isSuspended = false
-        wait()
+        }
+        await expectation.wait()
+
+        // Then only 2 operations: 1 partial, 1 final
+        #expect(expectation.operations.count == 2)
+
+        queue.isSuspended = false
+        let response = try await task.response
+        #expect(!response.isPreview)
     }
-    
+
     // MARK: Memory Cache
-    
-    func testIntermediateMemoryCachedResultsAreDelivered() {
+
+    @Test func intermediateMemoryCachedResultsAreDelivered() async throws {
         // GIVEN intermediate result stored in memory cache
         let request = ImageRequest(url: Test.url, processors: [
             processorsFactory.make(id: "1"),
@@ -309,46 +261,53 @@ class ImagePipelineProgressiveDecodingTests: XCTestCase {
             processorsFactory.make(id: "1")
         ])
         cache[intermediateRequest] = ImageContainer(image: Test.image, isPreview: true)
-        
+
         pipeline.configuration.dataLoadingQueue.isSuspended = true // Make sure no data is loaded
-        
-        // WHEN/THEN the pipeline find the first preview in the memory cache,
+
+        // WHEN/THEN the pipeline finds the first preview in the memory cache,
         // applies the remaining processors and delivers it
-        let previewDelivered = self.expectation(description: "previewDelivered")
-        pipeline.loadImage(with: request) { response, _, _ in
-            guard let response else {
-                return XCTFail()
-            }
-            XCTAssertEqual(response.image.nk_test_processorIDs, ["2"])
-            XCTAssertTrue(response.container.isPreview)
-            previewDelivered.fulfill()
-        } completion: { _ in
-            // Do nothing
+        let task = pipeline.imageTask(with: request)
+        var recordedPreviews: [ImageResponse] = []
+        for try await preview in task.previews {
+            recordedPreviews.append(preview)
+            break // Only need the first preview; data loading is suspended
         }
-        wait()
+
+        #expect(recordedPreviews.count == 1)
+        #expect(recordedPreviews.first?.image.nk_test_processorIDs == ["2"])
+        #expect(recordedPreviews.first?.container.isPreview == true)
     }
-    
+
+    // MARK: - Cancellation
+
+    @Test func cancelBeforeLoadingStartedIsHandledGracefully() async {
+        // GIVEN a task that is cancelled synchronously before the response is awaited
+        let task = pipeline.imageTask(with: Test.request)
+        task.cancel()
+
+        // THEN awaiting the response either throws (most likely) or succeeds
+        // without crashing. We do NOT record a failure if it succeeds, since
+        // timing means the loading may have already completed.
+        _ = try? await task.response
+    }
+
     // MARK: Scale
-    
+
 #if os(iOS) || os(visionOS)
-    func testOverridingImageScaleWithFloat() throws {
+    @Test func overridingImageScaleWithFloat() async throws {
         // GIVEN
-        let request = ImageRequest(url: Test.url, userInfo: [.scaleKey: 7.0])
-        
-        // WHEN/THEN the pipeline find the first preview in the memory cache,
-        // applies the remaining processors and delivers it
-        let previewDelivered = self.expectation(description: "previewDelivered")
-        pipeline.loadImage(with: request) { response, _, _ in
-            guard let response else {
-                return
-            }
-            XCTAssertTrue(response.container.isPreview)
-            XCTAssertEqual(response.image.scale, 7)
-            previewDelivered.fulfill()
-        } completion: { _ in
-            // Do nothing
+        let request = ImageRequest(url: Test.url).with { $0.scale = 7.0 }
+
+        // WHEN/THEN
+        let task = pipeline.imageTask(with: request)
+        var previewScale: CGFloat?
+        for try await preview in task.previews {
+            previewScale = preview.image.scale
+            dataLoader.resume()
         }
-        wait()
+        _ = try await task.response
+
+        #expect(previewScale == 7)
     }
 #endif
 }

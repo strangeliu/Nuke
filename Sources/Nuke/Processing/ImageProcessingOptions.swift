@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -15,8 +15,11 @@ import AppKit
 /// A namespace with shared image processing options.
 public enum ImageProcessingOptions: Sendable {
 
-    public enum Unit: CustomStringConvertible, Sendable {
+    /// A unit for size and radius values used in image processors.
+    @frozen public enum Unit: CustomStringConvertible, Sendable {
+        /// Points, automatically scaled to the screen's pixel density.
         case points
+        /// Pixels, used as-is without any scaling.
         case pixels
 
         public var description: String {
@@ -31,10 +34,10 @@ public enum ImageProcessingOptions: Sendable {
     ///
     /// - important: To make sure that the border looks the way you expect,
     /// make sure that the images you display exactly match the size of the
-    /// views in which they get displayed. If you can't guarantee that, pleasee
+    /// views in which they get displayed. If you can't guarantee that, please
     /// consider adding border to a view layer. This should be your primary
     /// option regardless.
-    public struct Border: Hashable, CustomStringConvertible, @unchecked Sendable {
+    public struct Border: Hashable, CustomStringConvertible, Sendable {
         public let width: CGFloat
 
 #if canImport(UIKit)
@@ -67,7 +70,7 @@ public enum ImageProcessingOptions: Sendable {
     }
 
     /// An option for how to resize the image.
-    public enum ContentMode: CustomStringConvertible, Sendable {
+    @frozen public enum ContentMode: CustomStringConvertible, Sendable {
         /// Scales the image so that it completely fills the target area.
         /// Maintains the aspect ratio of the original image.
         case aspectFill

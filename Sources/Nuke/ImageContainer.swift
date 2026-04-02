@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 #if !os(watchOS)
 import AVKit
@@ -12,35 +12,40 @@ import Foundation
 import UIKit.UIImage
 /// Alias for `UIImage`.
 public typealias PlatformImage = UIImage
+/// Alias for `UIColor`.
+public typealias PlatformColor = UIColor
 #else
 import AppKit.NSImage
 /// Alias for `NSImage`.
 public typealias PlatformImage = NSImage
+/// Alias for `NSColor`.
+public typealias PlatformColor = NSColor
 #endif
 
 /// An image container with an image and associated metadata.
 public struct ImageContainer: @unchecked Sendable {
+    /// The fetched image.
 #if os(macOS)
-    /// A fetched image.
     public var image: NSImage {
         get { ref.image }
         set { mutate { $0.image = newValue } }
     }
 #else
-    /// A fetched image.
     public var image: UIImage {
         get { ref.image }
         set { mutate { $0.image = newValue } }
     }
 #endif
 
-    /// An image type.
+    /// The detected format of the image data, such as JPEG, PNG, or GIF.
+    /// `nil` if the format is unknown or not relevant.
     public var type: AssetType? {
         get { ref.type }
         set { mutate { $0.type = newValue } }
     }
 
-    /// Returns `true` if the image in the container is a preview of the image.
+    /// Returns `true` if the image is a progressive preview rather than the
+    /// final decoded image.
     public var isPreview: Bool {
         get { ref.isPreview }
         set { mutate { $0.isPreview = newValue } }
@@ -59,8 +64,8 @@ public struct ImageContainer: @unchecked Sendable {
         set { mutate { $0.data = newValue } }
     }
 
-    /// An metadata provided by the user.
-    public var userInfo: [UserInfoKey: Any] {
+    /// Metadata provided by the user.
+    public var userInfo: [UserInfoKey: any Sendable] {
         get { ref.userInfo }
         set { mutate { $0.userInfo = newValue } }
     }
@@ -68,17 +73,17 @@ public struct ImageContainer: @unchecked Sendable {
     private var ref: Container
 
     /// Initializes the container with the given image.
-    public init(image: PlatformImage, type: AssetType? = nil, isPreview: Bool = false, data: Data? = nil, userInfo: [UserInfoKey: Any] = [:]) {
+    public init(image: PlatformImage, type: AssetType? = nil, isPreview: Bool = false, data: Data? = nil, userInfo: [UserInfoKey: any Sendable] = [:]) {
         self.ref = Container(image: image, type: type, isPreview: isPreview, data: data, userInfo: userInfo)
     }
 
-    func map(_ closure: (PlatformImage) throws -> PlatformImage) rethrows -> ImageContainer {
+    consuming func map(_ closure: (PlatformImage) throws -> PlatformImage) rethrows -> ImageContainer {
         var copy = self
-        copy.image = try closure(image)
+        copy.image = try closure(copy.image)
         return copy
     }
 
-    /// A key use in ``userInfo``.
+    /// A key used in ``userInfo``.
     public struct UserInfoKey: Hashable, ExpressibleByStringLiteral, Sendable {
         public let rawValue: String
 
@@ -111,9 +116,9 @@ public struct ImageContainer: @unchecked Sendable {
         var type: AssetType?
         var isPreview: Bool
         var data: Data?
-        var userInfo: [UserInfoKey: Any]
+        var userInfo: [UserInfoKey: any Sendable]
 
-        init(image: PlatformImage, type: AssetType?, isPreview: Bool, data: Data? = nil, userInfo: [UserInfoKey: Any]) {
+        init(image: PlatformImage, type: AssetType?, isPreview: Bool, data: Data? = nil, userInfo: [UserInfoKey: any Sendable]) {
             self.image = image
             self.type = type
             self.isPreview = isPreview

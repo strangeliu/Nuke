@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -13,8 +13,8 @@ final class MemoryCacheKey: Hashable, Sendable {
     private let processors: [any ImageProcessing]
 
     init(_ request: ImageRequest) {
-        self.imageId = request.preferredImageId
-        self.scale = request.scale ?? 1
+        self.imageId = request.imageID
+        self.scale = request.scale
         self.thumbnail = request.thumbnail
         self.processors = request.processors
     }
@@ -46,8 +46,8 @@ final class TaskLoadImageKey: Hashable, Sendable {
     }
 
     func hash(into hasher: inout Hasher) {
-        hasher.combine(loadKey.hashValue)
-        hasher.combine(options.hashValue)
+        hasher.combine(loadKey)
+        hasher.combine(options)
         hasher.combine(processors.count)
     }
 
@@ -64,7 +64,7 @@ struct TaskFetchOriginalImageKey: Hashable {
 
     init(_ request: ImageRequest) {
         self.dataLoadKey = TaskFetchOriginalDataKey(request)
-        self.scale = request.scale ?? 1
+        self.scale = request.scale
         self.thumbnail = request.thumbnail
     }
 }
@@ -76,9 +76,9 @@ struct TaskFetchOriginalDataKey: Hashable {
     private let allowsCellularAccess: Bool
 
     init(_ request: ImageRequest) {
-        self.imageId = request.imageId
+        self.imageId = request.originalImageID
         switch request.resource {
-        case .url, .publisher:
+        case .url, .data, .image:
             self.cachePolicy = .useProtocolCachePolicy
             self.allowsCellularAccess = true
         case let .urlRequest(urlRequest):

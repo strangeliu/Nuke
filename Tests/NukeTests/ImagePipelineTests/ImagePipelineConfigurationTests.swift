@@ -1,89 +1,59 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
 @testable import Nuke
 
-class ImagePipelineConfigurationTests: XCTestCase {
+@Suite(.timeLimit(.minutes(2)))
+struct ImagePipelineConfigurationTests {
 
-    func testImageIsLoadedWithRateLimiterDisabled() {
+    @Test func imageIsLoadedWithRateLimiterDisabled() async throws {
         // Given
         let dataLoader = MockDataLoader()
         let pipeline = ImagePipeline {
             $0.dataLoader = dataLoader
             $0.imageCache = nil
-
             $0.isRateLimiterEnabled = false
         }
 
         // When/Then
-        expect(pipeline).toLoadImage(with: Test.request)
-        wait()
+        _ = try await pipeline.image(for: Test.request)
     }
 
     // MARK: DataCache
 
-    func testWithDataCache() {
+    @Test func withDataCache() {
         let pipeline = ImagePipeline(configuration: .withDataCache)
-        XCTAssertNotNil(pipeline.configuration.dataCache)
+        #expect(pipeline.configuration.dataCache != nil)
     }
 
-    // MARK: Changing Callback Queue
-
-    func testChangingCallbackQueueLoadImage() {
-        // Given
-        let queue = DispatchQueue(label: "testChangingCallbackQueue")
-        let queueKey = DispatchSpecificKey<Void>()
-        queue.setSpecific(key: queueKey, value: ())
-
-        let dataLoader = MockDataLoader()
-        let pipeline = ImagePipeline {
-            $0.dataLoader = dataLoader
-            $0.imageCache = nil
-
-            $0._callbackQueue = queue
-        }
-
-        // When/Then
-        let expectation = self.expectation(description: "Image Loaded")
-        pipeline.loadImage(with: Test.request, progress: { _, _, _ in
-            XCTAssertNotNil(DispatchQueue.getSpecific(key: queueKey))
-        }, completion: { _ in
-            XCTAssertNotNil(DispatchQueue.getSpecific(key: queueKey))
-            expectation.fulfill()
-        })
-        wait()
-    }
-
-    func testChangingCallbackQueueLoadData() {
-        // Given
-        let queue = DispatchQueue(label: "testChangingCallbackQueue")
-        let queueKey = DispatchSpecificKey<Void>()
-        queue.setSpecific(key: queueKey, value: ())
-
-        let dataLoader = MockDataLoader()
-        let pipeline = ImagePipeline {
-            $0.dataLoader = dataLoader
-            $0.imageCache = nil
-
-            $0._callbackQueue = queue
-        }
-
-        // When/Then
-        let expectation = self.expectation(description: "Image data Loaded")
-        pipeline.loadData(with: Test.request, progress: { _, _ in
-            XCTAssertNotNil(DispatchQueue.getSpecific(key: queueKey))
-        }, completion: { _ in
-            XCTAssertNotNil(DispatchQueue.getSpecific(key: queueKey))
-            expectation.fulfill()
-        })
-        wait()
-    }
-
-    func testEnablingSignposts() {
+    @Test func enablingSignposts() {
         ImagePipeline.Configuration.isSignpostLoggingEnabled = false // Just padding
         ImagePipeline.Configuration.isSignpostLoggingEnabled = true
         ImagePipeline.Configuration.isSignpostLoggingEnabled = false
+    }
+
+    // MARK: - Default Values
+
+    @Test func isTaskCoalescingEnabledByDefault() {
+        let config = ImagePipeline.Configuration()
+        #expect(config.isTaskCoalescingEnabled == true)
+    }
+
+    @Test func isRateLimiterEnabledByDefault() {
+        let config = ImagePipeline.Configuration()
+        #expect(config.isRateLimiterEnabled == true)
+    }
+
+    @Test func isProgressiveDecodingDisabledByDefault() {
+        let config = ImagePipeline.Configuration()
+        #expect(config.isProgressiveDecodingEnabled == false)
+    }
+
+    @Test func dataCachePolicyDefaultsToStoreOriginalData() {
+        let config = ImagePipeline.Configuration()
+        #expect(config.dataCachePolicy == .storeOriginalData)
     }
 }

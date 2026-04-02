@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -18,7 +18,7 @@ public enum ImageProcessors {}
 extension ImageProcessing where Self == ImageProcessors.Resize {
     /// Scales an image to a specified size.
     ///
-    /// - parameters
+    /// - parameters:
     ///   - size: The target size.
     ///   - unit: Unit of the target size. By default, `.points`.
     ///   - contentMode: Target content mode.
@@ -91,6 +91,8 @@ extension ImageProcessing where Self == ImageProcessors.Anonymous {
 extension ImageProcessing where Self == ImageProcessors.CoreImageFilter {
     /// Applies Core Image filter – `CIFilter` – to the image.
     ///
+    /// - parameter name: The name of the `CIFilter` to apply.
+    /// - parameter parameters: The parameters for the filter.
     /// - parameter identifier: Uniquely identifies the processor.
     public static func coreImageFilter(name: String, parameters: [String: Any], identifier: String) -> ImageProcessors.CoreImageFilter {
         ImageProcessors.CoreImageFilter(name: name, parameters: parameters, identifier: identifier)

@@ -1,38 +1,34 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import XCTest
 import Nuke
 
 class ImagePipelinePerfomanceTests: XCTestCase {
     /// A very broad test that establishes how long in general it takes to load
-    /// data, decode, and decomperss 50+ images. It's very useful to get a
-    /// broad picture about how loader options affect perofmance.
-    func testLoaderOverallPerformance() {
+    /// data, decode, and decompress 50+ images. It's very useful to get a
+    /// broad picture about how loader options affect performance.
+    @concurrent func testLoaderOverallPerformance() async {
         let pipeline = makePipeline()
 
-        let requests = (0...5000).map { ImageRequest(url: URL(string: "http://test.com/\($0)")) }
-        let callbackQueue = DispatchQueue(label: "testLoaderOverallPerformance")
+        let requests = (0..<1000).map { ImageRequest(url: URL(string: "http://test.com/\($0)")) }
         measure {
-            var finished: Int = 0
-            let semaphore = DispatchSemaphore(value: 0)
+            let group = DispatchGroup()
             for request in requests {
-                pipeline.loadImage(with: request, queue: callbackQueue, progress: nil) { _ in
-                    finished += 1
-                    if finished == requests.count {
-                        semaphore.signal()
-                    }
+                group.enter()
+                pipeline.loadImage(with: request, progress: nil) { _ in
+                    group.leave()
                 }
             }
-            semaphore.wait()
+            group.wait()
         }
     }
 
     func testAsyncAwaitPerformance() {
         let pipeline = makePipeline()
 
-        let requests = (0...5000).map { ImageRequest(url: URL(string: "http://test.com/\($0)")) }
+        let requests = (0..<1000).map { ImageRequest(url: URL(string: "http://test.com/\($0)")) }
 
         measure {
             let semaphore = DispatchSemaphore(value: 0)
@@ -53,7 +49,7 @@ class ImagePipelinePerfomanceTests: XCTestCase {
     func testAsyncImageTaskPerformance() {
         let pipeline = makePipeline()
 
-        let requests = (0...5000).map { ImageRequest(url: URL(string: "http://test.com/\($0)")) }
+        let requests = (0..<5000).map { ImageRequest(url: URL(string: "http://test.com/\($0)")) }
 
         measure {
             let semaphore = DispatchSemaphore(value: 0)

@@ -1,171 +1,161 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
+import Combine
 @testable import Nuke
 @testable import NukeUI
 
-@MainActor
-class FetchImageTests: XCTestCase {
-    var dataLoader: MockDataLoader!
-    var imageCache: MockImageCache!
-    var dataCache: MockDataCache!
-    var observer: ImagePipelineObserver!
-    var pipeline: ImagePipeline!
-    var image: FetchImage!
+@Suite(.timeLimit(.minutes(2))) @MainActor
+struct FetchImageTests {
+    let dataLoader: MockDataLoader
+    let observer: ImagePipelineObserver
+    let pipeline: ImagePipeline
+    var image: FetchImage
 
-    @MainActor
-    override func setUp() {
-        super.setUp()
-
-        dataLoader = MockDataLoader()
-        imageCache = MockImageCache()
-        observer = ImagePipelineObserver()
-        dataCache = MockDataCache()
-
-        pipeline = ImagePipeline(delegate: observer) {
+    init() {
+        let dataLoader = MockDataLoader()
+        let observer = ImagePipelineObserver()
+        self.dataLoader = dataLoader
+        self.observer = observer
+        self.pipeline = ImagePipeline(delegate: observer) {
             $0.dataLoader = dataLoader
-            $0.imageCache = imageCache
-            $0.dataCache = dataCache
+            $0.imageCache = MockImageCache()
+            $0.dataCache = MockDataCache()
         }
-
-        image = FetchImage()
-        image.pipeline = pipeline
+        self.image = FetchImage()
+        self.image.pipeline = pipeline
     }
 
-    func testImageLoaded() throws {
-        // RECORD
-        let record = expect(image.$result.dropFirst()).toPublishSingleValue()
-
-        // WHEN
+    @Test func imageLoaded() async throws {
+        let expectation = TestExpectation()
+        image.onCompletion = { _ in expectation.fulfill() }
         image.load(Test.request)
-        wait()
+        await expectation.wait()
 
-        // THEN
-        let result = try XCTUnwrap(try XCTUnwrap(record.last))
-        XCTAssertTrue(result.isSuccess)
-        XCTAssertNotNil(image.image)
+        let result = try #require(image.result)
+        #expect(result.isSuccess)
+        #expect(image.image != nil)
     }
 
-    func testIsLoadingUpdated() {
-        // RECORD
-        expect(image.$result.dropFirst()).toPublishSingleValue()
-        let isLoading = record(image.$isLoading)
+    @Test func isLoadingUpdated() async {
+        #expect(!image.isLoading)
 
-        // WHEN
+        let expectation = TestExpectation()
+        image.onCompletion = { _ in expectation.fulfill() }
         image.load(Test.request)
-        wait()
+        #expect(image.isLoading)
 
-        // THEN
-        XCTAssertEqual(isLoading.values, [false, true, false])
+        await expectation.wait()
+        #expect(!image.isLoading)
     }
 
-    func testMemoryCacheLookup() throws {
-        // GIVEN
+    @Test func memoryCacheLookup() throws {
         pipeline.cache[Test.request] = Test.container
 
-        // WHEN
         image.load(Test.request)
 
-        // THEN image loaded synchronously
-        let result = try XCTUnwrap(image.result)
-        XCTAssertTrue(result.isSuccess)
-        let response = try XCTUnwrap(result.value)
-        XCTAssertEqual(response.cacheType, .memory)
-        XCTAssertNotNil(image.image)
+        let result = try #require(image.result)
+        #expect(result.isSuccess)
+        let response = try #require(result.value)
+        #expect(response.cacheType == .memory)
+        #expect(image.image != nil)
     }
 
-    func testPriorityUpdated() {
+    @Test func priorityUpdated() async throws {
         let queue = pipeline.configuration.dataLoadingQueue
         queue.isSuspended = true
-        let observer = self.expect(queue).toEnqueueOperationsWithCount(1)
+
+        let expectation = await TestExpectation(queue: queue, count: 1)
 
         image.priority = .high
         image.load(Test.request)
-        wait() // Wait till the operation is created.
 
-        guard let operation = observer.operations.first else {
-            return XCTFail("No operations gor registered")
-        }
-        XCTAssertEqual(operation.queuePriority, .high)
+        await expectation.wait()
+
+        let operation = try #require(expectation.operations.first)
+        let priority = await operation.priority
+        #expect(priority == .high)
     }
 
-    func testPriorityUpdatedDynamically() {
+    @Test func priorityUpdatedDynamically() async throws {
         let queue = pipeline.configuration.dataLoadingQueue
         queue.isSuspended = true
-        let observer = self.expect(queue).toEnqueueOperationsWithCount(1)
 
+        let expectation = await TestExpectation(queue: queue, count: 1)
         image.load(Test.request)
-        wait() // Wait till the operation is created.
+        await expectation.wait()
 
-        guard let operation = observer.operations.first else {
-            return XCTFail("No operations gor registered")
+        let operation = try #require(expectation.operations.first)
+
+        await queue.waitForPriorityChange(of: operation, to: .high) { @Sendable in
+            Task { @MainActor in
+                image.priority = .high
+            }
         }
-        expect(operation).toUpdatePriority()
-        image.priority = .high
-        wait()
     }
 
-    func testPublisherImageLoaded() throws {
-        // RECORD
-        let record = expect(image.$result.dropFirst()).toPublishSingleValue()
+    // MARK: - Publisher
 
-        // WHEN
+    @Test func publisherImageLoaded() async throws {
+        let expectation = TestExpectation()
+        let cancellable = image.$result.dropFirst().sink { _ in
+            expectation.fulfill()
+        }
+
         image.load(pipeline.imagePublisher(with: Test.request))
-        wait()
+        await expectation.wait()
 
-        // THEN
-        let result = try XCTUnwrap(try XCTUnwrap(record.last))
-        XCTAssertTrue(result.isSuccess)
-        XCTAssertNotNil(image.image)
+        let result = try #require(image.result)
+        #expect(result.isSuccess)
+        #expect(image.image != nil)
+        withExtendedLifetime(cancellable) {}
     }
 
-    func testPublisherIsLoadingUpdated() {
-        // RECORD
-        expect(image.$result.dropFirst()).toPublishSingleValue()
-        let isLoading = record(image.$isLoading)
+    @Test func publisherIsLoadingUpdated() async {
+        #expect(!image.isLoading)
 
-        // WHEN
+        let expectation = TestExpectation()
+        let cancellable = image.$result.dropFirst().sink { _ in
+            expectation.fulfill()
+        }
+
         image.load(pipeline.imagePublisher(with: Test.request))
-        wait()
+        #expect(image.isLoading)
 
-        // THEN
-        XCTAssertEqual(isLoading.values, [false, true, false])
+        await expectation.wait()
+        #expect(!image.isLoading)
+        withExtendedLifetime(cancellable) {}
     }
 
-    func testPublisherMemoryCacheLookup() throws {
-        // GIVEN
+    @Test func publisherMemoryCacheLookup() throws {
         pipeline.cache[Test.request] = Test.container
 
-        // WHEN
         image.load(pipeline.imagePublisher(with: Test.request))
 
-        // THEN image loaded synchronously
-        let result = try XCTUnwrap(image.result)
-        XCTAssertTrue(result.isSuccess)
-        let response = try XCTUnwrap(result.value)
-        XCTAssertEqual(response.cacheType, .memory)
-        XCTAssertNotNil(image.image)
+        let result = try #require(image.result)
+        #expect(result.isSuccess)
+        let response = try #require(result.value)
+        #expect(response.cacheType == .memory)
+        #expect(image.image != nil)
     }
 
-    func testRequestCancelledWhenTargetGetsDeallocated() {
+    // MARK: - Cancellation
+
+    @Test func requestCancelledWhenTargetGetsDeallocated() async {
         dataLoader.isSuspended = true
 
-        // Wrap everything in autorelease pool to make sure that imageView
-        // gets deallocated immediately.
-        autoreleasepool {
-            // Given an image view with an associated image task
-            expectNotification(ImagePipelineObserver.didStartTask, object: observer)
-            image.load(pipeline.imagePublisher(with: Test.request))
-            wait()
+        var localImage: FetchImage? = FetchImage()
+        localImage!.pipeline = pipeline
 
-            // Expect the task to be cancelled automatically
-            expectNotification(ImagePipelineObserver.didCancelTask, object: observer)
+        let startExpectation = TestExpectation(notification: ImagePipelineObserver.didStartTask, object: observer)
+        localImage!.load(pipeline.imagePublisher(with: Test.request))
+        await startExpectation.wait()
 
-            // When the fetch image instance is deallocated
-            image = nil
+        await notification(ImagePipelineObserver.didCancelTask, object: observer) {
+            localImage = nil
         }
-        wait()
     }
 }

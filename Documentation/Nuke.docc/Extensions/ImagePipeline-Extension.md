@@ -11,19 +11,19 @@ ImagePipeline {
 }
 ```
 
-You can customize ``ImagePipeline`` by initializing it with ``ImagePipeline/Configuration-swift.struct`` and ``ImagePipelineDelegate``. You can provide custom caches, data loaders, add support for new image formats, and more.
+You can customize ``ImagePipeline`` by initializing it with ``ImagePipeline/Configuration-swift.struct`` and ``ImagePipeline/Delegate-swift.protocol``. You can provide custom caches, data loaders, add support for new image formats, and more.
 
 > Tip: The pipeline has two cache layers: memory cache and disk cache. By default, only the memory cache is enabled. For caching data persistently, it relies on system [`URLCache`](https://developer.apple.com/documentation/foundation/urlcache). There are advantages to enabling a custom disk cache. You can learn more in <doc:caching>.
 
 ## Loading Images
 
-Use ``ImagePipeline/image(for:)-4akzh`` that works with both `URL` and ``ImageRequest`` and returns an image.
+Use ``ImagePipeline/image(for:)-(URL)`` (or the ``ImageRequest`` overload) to load an image.
 
 ```swift
 let image = try await ImagePipeline.shared.image(for: url)
 ```
 
-Alternatively, you can create an ``AsyncImageTask`` and access its ``AsyncImageTask/image`` or ``AsyncImageTask/response`` to fetch the image. You can use ``AsyncImageTask`` to cancel the request, change the priority of the running task, and observe its progress.
+Alternatively, you can create an ``ImageTask`` and access its ``ImageTask/image`` or ``ImageTask/response`` to fetch the image. You can use ``ImageTask`` to cancel the request, change the priority of the running task, and observe its progress.
 
 ```swift
 final class AsyncImageView: UIImageView {
@@ -37,7 +37,7 @@ final class AsyncImageView: UIImageView {
 }
 ```
 
-> Tip: The recommended way to load images ``ImagePipeline`` is by using Async/Await API. But the pipeline also has API that works with closures and Combine publishers.
+> Tip: The recommended way to load images with ``ImagePipeline`` is by using Async/Await API. But the pipeline also has API that works with closures and Combine publishers.
 
 ## Caching
 
@@ -79,11 +79,18 @@ Coalescing can be disabled using ``ImagePipeline/Configuration-swift.struct/isTa
 
 ## Progressive Decoding
 
-If progressive decoding is enabled, the pipeline attempts to produce a preview of any image every time a new chunk of data is loaded. See it in action in the [demo project](https://github.com/kean/NukeDemo).
+If progressive decoding is enabled, the pipeline attempts to produce previews as data arrives. The behavior is controlled by ``ImagePipeline/PreviewPolicy``, which the pipeline resolves via ``ImagePipeline/Delegate/previewPolicy(for:pipeline:)``.
 
-When the pipeline downloads the first chunk of data, it creates an instance of a decoder used for the entire image loading session. When the new chunks are loaded, the pipeline passes them to the decoder. The decoder can either produce a preview or return `nil` if not enough data is downloaded.
+**Default policy:** `.incremental` for progressive JPEGs and GIFs, `.disabled` for all other formats (baseline JPEGs, PNGs, etc.). This means only formats that benefit from incremental rendering produce previews by default.
 
-Every image preview goes through the same processing and decompression phases as the final images. The main difference is the introduction of backpressure. If one of the stages can't process the input fast enough, the pipeline waits until the current operation is finished, and only then the next one starts. All outstanding progressive operations are canceled to save processing time when the data is fully downloaded.
+**Available policies:**
+- `.incremental` — Uses `CGImageSourceCreateIncremental` to produce a new preview as more data arrives. For JPEGs with large EXIF headers where incremental decoding fails, the decoder automatically falls back to generating a thumbnail.
+- `.thumbnail` — Extracts the embedded EXIF thumbnail (if any), then stops.
+- `.disabled` — No previews.
+
+**Throttling:** The pipeline throttles progressive decoding attempts using ``ImagePipeline/Configuration-swift.struct/progressiveDecodingInterval`` (default: 0.5s). When data arrives faster than this interval, intermediate chunks are skipped. This prevents excessive decoding work on fast connections.
+
+**Backpressure:** Every preview goes through the same processing and decompression phases as the final image. If a stage can't keep up, the pipeline waits for the current operation to finish before starting the next one. All outstanding progressive operations are canceled when the data is fully downloaded.
 
 ## Topics
 
@@ -103,29 +110,26 @@ Every image preview goes through the same processing and decompression phases as
 
 ### Loading Images (Async/Await)
 
-- ``image(for:)-4akzh``
-- ``image(for:)-9egg6``
-- ``imageTask(with:)-7s0fc``
-- ``imageTask(with:)-6aagk``
+- ``image(for:)-(URL)``
+- ``image(for:)-(ImageRequest)``
+- ``imageTask(with:)-(URL)``
+- ``imageTask(with:)-(ImageRequest)``
 
 ### Loading Images (Combine)
 
-- ``imagePublisher(with:)-8j2bd``
-- ``imagePublisher(with:)-3pzm6``
+- ``imagePublisher(with:)-(URL)``
+- ``imagePublisher(with:)-(ImageRequest)``
 
 ### Loading Images (Closures)
 
-- ``loadImage(with:completion:)-6q74f``
-- ``loadImage(with:completion:)-43osv``
-- ``loadImage(with:queue:progress:completion:)``
+- ``loadImage(with:completion:)-(URL,_)``
+- ``loadImage(with:completion:)-(ImageRequest,_)``
+- ``loadImage(with:progress:completion:)``
 
 ### Loading Data
 
-- ``data(for:)-86rhw``
-- ``data(for:)-54h5g``
-- ``loadData(with:completion:)-815rt``
-- ``loadData(with:completion:)-6cwk3``
-- ``loadData(with:queue:progress:completion:)``
+- ``data(for:)``
+- ``loadData(with:completion:)``
 
 ### Accessing Cached Images
 

@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 import CoreGraphics
@@ -22,15 +22,15 @@ extension ImageEncoders {
         public let type: AssetType
         public let compressionRatio: Float
 
-        /// - parameter format: The output format. Make sure that the format is
-        /// supported on the current hardware.s
+        /// - parameter type: The output format. Make sure that the format is
+        /// supported on the current hardware.
         /// - parameter compressionRatio: 0.8 by default.
         public init(type: AssetType, compressionRatio: Float = 0.8) {
             self.type = type
             self.compressionRatio = compressionRatio
         }
 
-        private static let availability = Atomic<[AssetType: Bool]>(value: [:])
+        private static let availability = Mutex<[AssetType: Bool]>(value: [:])
 
         /// Returns `true` if the encoding is available for the given format on
         /// the current hardware. Some of the most recent formats might not be

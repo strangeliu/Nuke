@@ -1,11 +1,12 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
 /// Provides basic networking using `URLSession`.
 public final class DataLoader: DataLoading, @unchecked Sendable {
+    /// The underlying `URLSession` used for loading data.
     public let session: URLSession
     private let impl: _DataLoader
 
@@ -79,7 +80,7 @@ public final class DataLoader: DataLoading, @unchecked Sendable {
     }()
 #endif
 
-    /// Shared url cached used by a default ``DataLoader``. The cache is
+    /// Shared URL cache used by a default ``DataLoader``. The cache is
     /// initialized with 0 MB memory capacity and 150 MB disk capacity.
     public static let sharedUrlCache: URLCache = {
         let diskCapacity = 150 * 1048576 // 150 MB
@@ -90,13 +91,13 @@ public final class DataLoader: DataLoading, @unchecked Sendable {
 #endif
     }()
 
-    public func loadData(with request: URLRequest,
-                         didReceiveData: @escaping (Data, URLResponse) -> Void,
-                         completion: @escaping (Swift.Error?) -> Void) -> any Cancellable {
+    public func loadData(
+        with request: URLRequest,
+        didReceiveData: @escaping @Sendable (Data, URLResponse) -> Void,
+        completion: @escaping @Sendable (Swift.Error?) -> Void
+    ) -> any Cancellable {
         let task = session.dataTask(with: request)
-        if #available(iOS 14.5, tvOS 14.5, watchOS 7.4, macOS 11.3, *) {
-            task.prefersIncrementalDelivery = prefersIncrementalDelivery
-        }
+        task.prefersIncrementalDelivery = prefersIncrementalDelivery
         return impl.loadData(with: task, session: session, didReceiveData: didReceiveData, completion: completion)
     }
 
@@ -127,10 +128,12 @@ private final class _DataLoader: NSObject, URLSessionDataDelegate, @unchecked Se
     }
 
     /// Loads data with the given request.
-    func loadData(with task: URLSessionDataTask,
-                  session: URLSession,
-                  didReceiveData: @escaping (Data, URLResponse) -> Void,
-                  completion: @escaping (Error?) -> Void) -> any Cancellable {
+    func loadData(
+        with task: URLSessionDataTask,
+        session: URLSession,
+        didReceiveData: @escaping (Data, URLResponse) -> Void,
+        completion: @escaping (Error?) -> Void
+    ) -> any Cancellable {
         let handler = _Handler(didReceiveData: didReceiveData, completion: completion)
         session.delegateQueue.addOperation { // `URLSession` is configured to use this same queue
             self.handlers[task] = handler
@@ -141,7 +144,7 @@ private final class _DataLoader: NSObject, URLSessionDataDelegate, @unchecked Se
 
     // MARK: URLSessionDelegate
 
-#if !os(macOS) && !targetEnvironment(macCatalyst) && swift(>=5.7)
+#if !os(macOS) && !targetEnvironment(macCatalyst)
     func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
         if #available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *) {
             (delegate as? URLSessionTaskDelegate)?.urlSession?(session, didCreateTask: task)

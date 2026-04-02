@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 import Nuke
@@ -19,10 +19,10 @@ import AppKit.NSImage
 ///
 /// The protocol is defined as `@objc` to make it possible to override its
 /// methods in extensions (e.g. you can override `nuke_display(image:data:)` in
-/// `UIImageView` subclass like `Gifu.ImageView).
+/// a `UIImageView` subclass like `Gifu.ImageView`).
 ///
 /// The protocol and its methods have prefixes to make sure they don't clash
-/// with other similar methods and protocol in Objective-C runtime.
+/// with other similar methods and protocols in the Objective-C runtime.
 @MainActor
 @objc public protocol Nuke_ImageDisplaying {
     /// Display a given image.
@@ -47,7 +47,7 @@ extension Nuke_ImageDisplaying {
 
 #if os(iOS) || os(tvOS) || os(visionOS)
 import UIKit
-/// A `UIView` that implements `ImageDisplaying` protocol.
+/// A `UIView` that implements the `ImageDisplaying` protocol.
 public typealias ImageDisplayingView = UIView & Nuke_ImageDisplaying
 
 extension UIImageView: Nuke_ImageDisplaying {
@@ -58,7 +58,7 @@ extension UIImageView: Nuke_ImageDisplaying {
 }
 #elseif os(macOS)
 import Cocoa
-/// An `NSObject` that implements `ImageDisplaying`  and `Animating` protocols.
+/// An `NSObject` that implements the `ImageDisplaying` protocol.
 /// Can support `NSView` and `NSCell`. The latter can return nil for layer.
 public typealias ImageDisplayingView = NSObject & Nuke_ImageDisplaying
 
@@ -91,7 +91,7 @@ extension TVPosterView: Nuke_ImageDisplaying {
     with url: URL?,
     options: ImageLoadingOptions? = nil,
     into view: ImageDisplayingView,
-    completion: @escaping (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void
+    completion: @escaping @MainActor @Sendable (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void
 ) -> ImageTask? {
     loadImage(with: url, options: options, into: view, progress: nil, completion: completion)
 }
@@ -108,7 +108,7 @@ extension TVPosterView: Nuke_ImageDisplaying {
 /// with the selected animation.
 ///
 /// - parameters:
-///   - request: The image request. If `nil`, it's handled as a failure scenario.
+///   - url: The image URL. If `nil`, it's handled as a failure scenario.
 ///   - options: `ImageLoadingOptions.shared` by default.
 ///   - view: Nuke keeps a weak reference to the view. If the view is deallocated
 ///   the associated request automatically gets canceled.
@@ -124,8 +124,8 @@ extension TVPosterView: Nuke_ImageDisplaying {
     with url: URL?,
     options: ImageLoadingOptions? = nil,
     into view: ImageDisplayingView,
-    progress: ((_ response: ImageResponse?, _ completed: Int64, _ total: Int64) -> Void)? = nil,
-    completion: ((_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void)? = nil
+    progress: (@MainActor @Sendable (_ response: ImageResponse?, _ completed: Int64, _ total: Int64) -> Void)? = nil,
+    completion: (@MainActor @Sendable (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void)? = nil
 ) -> ImageTask? {
     let controller = ImageViewController.controller(for: view)
     return controller.loadImage(with: url.map({ ImageRequest(url: $0) }), options: options ?? .shared, progress: progress, completion: completion)
@@ -139,7 +139,7 @@ extension TVPosterView: Nuke_ImageDisplaying {
     with request: ImageRequest?,
     options: ImageLoadingOptions? = nil,
     into view: ImageDisplayingView,
-    completion: @escaping (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void
+    completion: @escaping @MainActor @Sendable (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void
 ) -> ImageTask? {
     loadImage(with: request, options: options ?? .shared, into: view, progress: nil, completion: completion)
 }
@@ -172,8 +172,8 @@ extension TVPosterView: Nuke_ImageDisplaying {
     with request: ImageRequest?,
     options: ImageLoadingOptions? = nil,
     into view: ImageDisplayingView,
-    progress: ((_ response: ImageResponse?, _ completed: Int64, _ total: Int64) -> Void)? = nil,
-    completion: ((_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void)? = nil
+    progress: (@MainActor @Sendable (_ response: ImageResponse?, _ completed: Int64, _ total: Int64) -> Void)? = nil,
+    completion: (@MainActor @Sendable (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void)? = nil
 ) -> ImageTask? {
     let controller = ImageViewController.controller(for: view)
     return controller.loadImage(with: request, options: options ?? .shared, progress: progress, completion: completion)
@@ -216,12 +216,8 @@ private final class ImageViewController {
 
     // MARK: - Associating Controller
 
-#if swift(>=5.10)
     // Safe because it's never mutated.
     nonisolated(unsafe) static let controllerAK = malloc(1)!
-#else
-    static let controllerAK = malloc(1)!
-#endif
 
     // Lazily create a controller for a given view and associate it with a view.
     static func controller(for view: ImageDisplayingView) -> ImageViewController {
@@ -238,8 +234,8 @@ private final class ImageViewController {
     func loadImage(
         with request: ImageRequest?,
         options: ImageLoadingOptions,
-        progress: ((_ response: ImageResponse?, _ completed: Int64, _ total: Int64) -> Void)? = nil,
-        completion: ((_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void)? = nil
+        progress: (@MainActor @Sendable (_ response: ImageResponse?, _ completed: Int64, _ total: Int64) -> Void)? = nil,
+        completion: (@MainActor @Sendable (_ result: Result<ImageResponse, ImagePipeline.Error>) -> Void)? = nil
     ) -> ImageTask? {
         cancelOutstandingTask()
 
@@ -290,7 +286,7 @@ private final class ImageViewController {
             imageView.nuke_display(image: nil, data: nil) // Remove previously displayed images (if any)
         }
 
-        task = pipeline.loadImage(with: request, queue: .main, progress: { [weak self] response, completedCount, totalCount in
+        task = pipeline.loadImage(with: request, progress: { [weak self] response, completedCount, totalCount in
             if let response, options.isProgressiveRenderingEnabled {
                 self?.handle(partialImage: response)
             }
@@ -418,11 +414,9 @@ extension ImageViewController {
         transitionView.frame = imageView.frame
         transitionView.tintColor = imageView.tintColor
         transitionView.tintAdjustmentMode = imageView.tintAdjustmentMode
-#if swift(>=5.9)
         if #available(iOS 17.0, tvOS 17.0, *) {
             transitionView.preferredImageDynamicRange = imageView.preferredImageDynamicRange
         }
-#endif
         transitionView.preferredSymbolConfiguration = imageView.preferredSymbolConfiguration
         transitionView.isHidden = imageView.isHidden
         transitionView.clipsToBounds = imageView.clipsToBounds

@@ -55,7 +55,7 @@ DataLoader.sharedUrlCache.removeCachedResponse(for: urlRequest)
 DataLoader.sharedUrlCache.removeAllCachedResponses()
 ```
 
-An HTTP disk cache (``ImagePipeline/Configuration-swift.struct/withURLCache`` option) gives the server precise control over caching via [`cache-control`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control) HTTP headers. You can specify what images to cache and for how long. The client can't also periodically check the cached response for [freshness](https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching#freshness) and refresh if needed – useful for refreshing profile pictures or logos.
+An HTTP disk cache (``ImagePipeline/Configuration-swift.struct/withURLCache`` option) gives the server precise control over caching via [`cache-control`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control) HTTP headers. You can specify what images to cache and for how long. The client can also periodically check the cached response for [freshness](https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching#freshness) and refresh if needed – useful for refreshing profile pictures or logos.
 
 > Tip: Learn more about HTTP cache in ["Image Caching."](https://kean.blog/post/image-caching#http-caching)
 
@@ -105,7 +105,28 @@ dataCache.removeData(for: "key")
 dataCache.removeAll()
 ```
 
-``DataCache`` is asynchronous which means ``DataCache/storeData(_:for:)`` method returns imediatelly and the disk I/O happens later. For a synchronous write, use ``DataCache/flush()``.
+``DataCache`` is asynchronous which means ``DataCache/storeData(_:for:)`` method returns immediately and the disk I/O happens later. For a synchronous write, use ``DataCache/flush()``.
+
+> Tip: To share a disk cache between your app and an extension (e.g. a Notification Service Extension), point ``DataCache`` at a directory inside a shared app group container. Set ``DataCache/isSweepEnabled`` to `false` in the extension so that only the main app enforces size limits.
+>
+> ```swift
+> let sharedCacheURL = FileManager.default
+>     .containerURL(forSecurityApplicationGroupIdentifier: "group.com.myapp")
+>
+> // Main app
+> ImagePipeline.shared = ImagePipeline {
+>     $0.dataCache = try? DataCache(path: sharedCacheURL)
+> }
+>
+> // Extension — reads/writes the same cache but skips LRU sweeps
+> ImagePipeline.shared = ImagePipeline {
+>     $0.dataCache = {
+>         let cache = try? DataCache(path: sharedCacheURL)
+>         cache?.isSweepEnabled = false
+>         return cache
+>     }()
+> }
+> ```
 
 ```swift
 dataCache.storeData(data, for: "key")

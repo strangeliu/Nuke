@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 import CoreGraphics
@@ -19,9 +19,6 @@ extension ImageProcessors {
         private let crop: Bool
         private let upscale: Bool
 
-        // Deprecated in Nuke 12.0
-        @available(*, deprecated, message: "Renamed to `ImageProcessingOptions.ContentMode")
-        public typealias ContentMode = ImageProcessingOptions.ContentMode
 
         /// Initializes the processor with the given size.
         ///
@@ -29,9 +26,9 @@ extension ImageProcessors {
         ///   - size: The target size.
         ///   - unit: Unit of the target size.
         ///   - contentMode: A target content mode.
-        ///   - crop: If `true` will crop the image to match the target size.
-        ///   Does nothing with content mode .aspectFill.
-        ///  - upscale: By default, upscaling is not allowed.
+        ///   - crop: If `true`, crops the image to exactly match the target size.
+        ///   Has no effect when `contentMode` is `.aspectFill`.
+        ///   - upscale: By default, upscaling is not allowed.
         public init(size: CGSize, unit: ImageProcessingOptions.Unit = .points, contentMode: ImageProcessingOptions.ContentMode = .aspectFill, crop: Bool = false, upscale: Bool = false) {
             self.size = ImageTargetSize(size: size, unit: unit)
             self.contentMode = contentMode
@@ -76,21 +73,32 @@ extension ImageProcessors {
     }
 }
 
-// Adds Hashable without making changes to public CGSize API
+// Adds Hashable without making changes to public CGSize API. It uses `Float`
+// to reduce memory size.
 struct ImageTargetSize: Hashable {
-    let cgSize: CGSize
+    let width: Float
+    let height: Float
+
+    var cgSize: CGSize { CGSize(width: Double(width), height: Double(height)) }
+
+    init(maxPixelSize: Float) {
+        (width, height) = (maxPixelSize, 0)
+    }
 
     /// Creates the size in pixels by scaling to the input size to the screen scale
     /// if needed.
     init(size: CGSize, unit: ImageProcessingOptions.Unit) {
         switch unit {
-        case .pixels: self.cgSize = size // The size is already in pixels
-        case .points: self.cgSize = size.scaled(by: Screen.scale)
+        case .pixels:
+            (width, height) = (Float(size.width), Float(size.height))
+        case .points:
+            let scaled = size.scaled(by: Screen.scale)
+            (width, height) = (Float(scaled.width), Float(scaled.height))
         }
     }
 
     func hash(into hasher: inout Hasher) {
-        hasher.combine(cgSize.width)
-        hasher.combine(cgSize.height)
+        hasher.combine(width)
+        hasher.combine(height)
     }
 }

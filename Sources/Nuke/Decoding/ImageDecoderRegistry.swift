@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -19,9 +19,6 @@ public final class ImageDecoderRegistry: @unchecked Sendable {
 
     /// Returns a decoder that matches the given context.
     public func decoder(for context: ImageDecodingContext) -> (any ImageDecoding)? {
-        lock.lock()
-        defer { lock.unlock() }
-
         for match in matches.reversed() {
             if let decoder = match(context) {
                 return decoder
@@ -38,29 +35,29 @@ public final class ImageDecoderRegistry: @unchecked Sendable {
     /// including progressively decoded images. If the decoder doesn't support
     /// progressive decoding, return `nil` when `isCompleted` is `false`.
     public func register(_ match: @escaping (ImageDecodingContext) -> (any ImageDecoding)?) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        matches.append(match)
+        lock.withLock { matches.append(match) }
     }
 
     /// Removes all registered decoders.
     public func clear() {
-        lock.lock()
-        defer { lock.unlock() }
-
-        matches = []
+        lock.withLock { matches = [] }
     }
 }
 
 /// Image decoding context used when selecting which decoder to use.
-public struct ImageDecodingContext: @unchecked Sendable {
+public struct ImageDecodingContext: Sendable {
     public var request: ImageRequest
     public var data: Data
     /// Returns `true` if the download was completed.
     public var isCompleted: Bool
     public var urlResponse: URLResponse?
     public var cacheType: ImageResponse.CacheType?
+    /// The preview policy for progressive decoding. Set by the pipeline
+    /// delegate for partial data; defaults to `.incremental`.
+    public var previewPolicy: ImagePipeline.PreviewPolicy = .incremental
+    /// The maximum decoded image size in bytes before automatic downscaling.
+    /// `nil` disables the check. Set by the pipeline from its configuration.
+    public var maximumDecodedImageSize: Int?
 
     public init(request: ImageRequest, data: Data, isCompleted: Bool = true, urlResponse: URLResponse? = nil, cacheType: ImageResponse.CacheType? = nil) {
         self.request = request

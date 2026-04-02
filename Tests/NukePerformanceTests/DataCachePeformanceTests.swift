@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import XCTest
 import Nuke
@@ -36,7 +36,7 @@ class DataCachePeformanceTests: XCTestCase {
     }
 
     func testWriteWithFlushIndividual() {
-        let data = Array(0..<count).map { _ in generateRandomData() }
+        let data = Array(0..<200).map { _ in generateRandomData() }
 
         measure {
             for index in data.indices {
@@ -64,10 +64,10 @@ class DataCachePeformanceTests: XCTestCase {
 
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = 2
-        measure {
+        measure { [cache] in
             for idx in 0..<count {
                 queue.addOperation {
-                    _ = self.cache["\(idx)"]
+                    _ = cache?["\(idx)"]
                 }
             }
             queue.waitUntilAllOperationsAreFinished()

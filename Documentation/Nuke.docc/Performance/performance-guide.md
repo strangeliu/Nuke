@@ -34,7 +34,11 @@ This response is cacheable, and will be *fresh* for 1 hour. When the response be
 
 If your server uses unique URLs for images for which the contents never change, consider enabling ``DataCache`` (see ``ImagePipeline/Configuration-swift.struct/withDataCache`` that also takes care of disabling the default `URLCache`). It's a fast persistent cache with non-blocking writes that allows reads to be parallel to writes and each other. It also works offline and reduces pressure on `URLSession`.
 
-> Tip: By default ``DataCache``, stores only the original image data. To store processed images, use one of the data cache policies that enable it, for example ``ImagePipeline/DataCachePolicy/automatic``.
+> Tip: By default, ``DataCache`` stores only the original image data. To also cache processed images, set a data cache policy that enables it. ``ImagePipeline/DataCachePolicy/automatic`` is a good default: it stores original data for unprocessed requests and processed images for requests with processors.
+
+```swift
+ImagePipeline.shared = ImagePipeline(configuration: .withDataCache(dataCachePolicy: .automatic))
+```
 
 > Tip: To save disk space, see `ImageEncoders.ImageIO` and `ImageEncoder.isHEIFPreferred` option for HEIF support.
 
@@ -42,7 +46,7 @@ If your server uses unique URLs for images for which the contents never change, 
 
 Prefetching means downloading data ahead of time in anticipation of its use. It creates an illusion that the images are simply available the moment you want to see them – no networking involved. It's very effective. See <doc:prefetching> to learn more about how to enable it.
 
-> Important: If you apply processors when displaying final images, make sure to use the same processors for prefetching. Otherwise, Nuke will end-up populating the memory cache with the versions of the images you are never going to need for display.
+> Important: If you apply processors when displaying final images, make sure to use the same processors for prefetching. Otherwise, Nuke will end up populating the memory cache with the versions of the images you are never going to need for display.
 
 ## Decompression
 
@@ -56,7 +60,7 @@ Ideally, the app should download the images optimized for the target device scre
 
 ```swift
 // Target size is in points
-let request = ImageRequest(url: url,  processors: [.resize(width: 320)])
+let request = ImageRequest(url: url, processors: [.resize(width: 320)])
 ```
 
 > Tip: Some image formats, such as jpeg, can have thumbnails embedded in the original image data. If you are working with a large image and want to show only a thumbnail, consider using ``ImageRequest/ThumbnailOptions``. If the thumbnails aren't available, they are generated. It can be up to 4x faster than using ``ImageProcessors/Resize`` for high-resolution images. 
@@ -66,7 +70,7 @@ let request = ImageRequest(url: url,  processors: [.resize(width: 320)])
 Nuke has a range of optimizations across the board to ensure it does as little work on the main thread as possible.
 
 - **CoW**. The primary type in Nuke is ``ImageRequest``. It has multiple options, so the struct is quite large. To make sure that passing it around is as efficient as possible, ``ImageRequest``  uses a Copy-on-Write technique.
-- **OptionSet**. In one of the recent versions of Nuke, ``ImageRequest`` was optimized even further by using option sets and reordering properties to take advantage of gaps in memory stride. It currently takes only 48 bytes in memory (compared to 176 bytes in the previous versions).
+- **OptionSet**. In one of the recent versions of Nuke, ``ImageRequest`` was optimized even further by using option sets and reordering properties to take advantage of gaps in memory stride to reduce its memory layout.
 - **ImageRequest.CacheKey**. Most frameworks use strings to uniquely identify requests. But string manipulations are expensive, and this is why in Nuke, there is a special internal type, `ImageRequest.CacheKey`, which allows for efficient equality checks with no strings manipulation.
 
 These are just some examples of the optimization techniques used in Nuke. There are many more. Every new feature in Nuke is designed with performance in mind to make sure there are no performance regressions ever.
@@ -82,7 +86,9 @@ Make sure your server supports resumable downloads. If the data task is terminat
 Thanks to coalescing (enabled by default), the pipeline avoids doing any duplicated work when loading images. Let's take the following two requests as an example.
 
 ```swift
-let url = URL(string: "http://example.com/image")
+let url = URL(string: "https://example.com/image")
+
+// Only one network request is made for both of these
 pipeline.loadImage(with: ImageRequest(url: url, processors: [
     .resize(size: CGSize(width: 44, height: 44)),
     .gaussianBlur(radius: 8)
@@ -94,13 +100,25 @@ pipeline.loadImage(with: ImageRequest(url: url, processors: [
 
 Nuke will load the data only once, resize the image once and blur it also only once. There is no duplicated work done. When you request an image, the pipeline creates a dependency graph of tasks needed to deliver the final images and reuses the ones that it can.
 
+> Note: Coalescing is controlled by ``ImagePipeline/Configuration-swift.struct/isTaskCoalescingEnabled``. It can be disabled if you need requests with the same URL to be treated as independent tasks.
+
 ## Progressive Decoding
 
-Nuke supports progressive JPEG out of the box. You’ll first see a blurry version of the full image, which gets sharper as the image is decoded or rendered in the app.
+Nuke supports progressive JPEG, but it must be enabled in the pipeline configuration.
+
+```swift
+ImagePipeline.shared = ImagePipeline {
+    $0.isProgressiveDecodingEnabled = true
+}
+```
+
+Once enabled, you’ll first see a blurry low-quality version of the full image, which gets sharper as more data arrives. Progressive previews are delivered through the same ``ImageTask`` progress handler or `AsyncStream` used for the final image.
 
 ## Request Priorities
 
-Nuke is fully asynchronous and performs well under stress. ``ImagePipeline`` distributed its work on [operation queues](https://developer.apple.com/documentation/foundation/operationqueue) dedicated to a specific type of work, such as processing and decoding. Each queue limits the number of concurrent tasks, respects the request priorities, and cancels the work as soon as possible.
+Nuke is fully asynchronous and performs well under stress. ``ImagePipeline`` distributes its work on [operation queues](https://developer.apple.com/documentation/foundation/operationqueue) dedicated to a specific type of work, such as processing and decoding. Each queue limits the number of concurrent tasks, respects the request priorities, and cancels the work as soon as possible.
+
+Cancelling an ``ImageTask`` frees its associated network and CPU resources immediately. Thanks to coalescing, the underlying work is only cancelled when all requests sharing it have been cancelled — so cancelling one request doesn't affect others loading the same image.
 
 Nuke allows you to set the request priority and update it for outstanding tasks. It uses priorities for prefetching: the requests created by the prefetcher all have `.low` priority to make sure they don't interfere with the "regular" requests. See <doc:prefetching> to learn more.
 

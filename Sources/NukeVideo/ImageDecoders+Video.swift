@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 #if !os(watchOS) && !os(visionOS)
 
@@ -20,21 +20,29 @@ extension ImageDecoders {
     public final class Video: ImageDecoding, @unchecked Sendable {
         private var didProducePreview = false
         private let type: AssetType
+
+        /// Always `true` — decoding is performed asynchronously to avoid blocking the pipeline.
         public var isAsynchronous: Bool { true }
 
         private let lock = NSLock()
 
+        /// Returns `nil` if the data is not a recognized video format (MP4, M4V, or MOV).
         public init?(context: ImageDecodingContext) {
             guard let type = AssetType(context.data), type.isVideo else { return nil }
             self.type = type
         }
 
+        /// Decodes the complete video data and returns an ``ImageContainer`` with a
+        /// thumbnail preview and an ``AVDataAsset`` stored in ``ImageContainer/userInfo``.
         public func decode(_ data: Data) throws -> ImageContainer {
-            ImageContainer(image: PlatformImage(), type: type, data: data, userInfo: [
+            let image = makePreview(for: data, type: type) ?? PlatformImage()
+            return ImageContainer(image: image, type: type, data: data, userInfo: [
                 .videoAssetKey: AVDataAsset(data: data, type: type)
             ])
         }
 
+        /// Returns a single thumbnail preview for the first frame of partially downloaded
+        /// video data, or `nil` if the data is not yet decodable or a preview was already produced.
         public func decodePartiallyDownloadedData(_ data: Data) -> ImageContainer? {
             lock.lock()
             defer { lock.unlock() }
@@ -55,7 +63,7 @@ extension ImageDecoders {
 }
 
 extension ImageContainer.UserInfoKey {
-    /// A key for a video asset (`AVAsset`)
+    /// A key for a video asset (`AVAsset`).
     public static let videoAssetKey: ImageContainer.UserInfoKey = "com.github/kean/nuke/video-asset"
 }
 

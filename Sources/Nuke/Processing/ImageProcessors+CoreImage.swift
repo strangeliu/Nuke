@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 #if os(iOS) || os(tvOS) || os(macOS) || os(visionOS)
 
@@ -37,6 +37,8 @@ extension ImageProcessors {
 
         /// Initializes the processor with a name of the `CIFilter` and its parameters.
         ///
+        /// - parameter name: The name of the `CIFilter` to apply.
+        /// - parameter parameters: The parameters for the filter.
         /// - parameter identifier: Uniquely identifies the processor.
         public init(name: String, parameters: [String: Any], identifier: String) {
             self.filter = .named(name, parameters: parameters)
@@ -49,8 +51,9 @@ extension ImageProcessors {
             self.identifier = "com.github.kean/nuke/core_image?name=\(name))"
         }
 
-        /// Initialize the processor with the given `CIFilter`.
+        /// Initializes the processor with the given `CIFilter`.
         ///
+        /// - parameter filter: The `CIFilter` to apply.
         /// - parameter identifier: Uniquely identifies the processor.
         public init(_ filter: CIFilter, identifier: String) {
             self.filter = .custom(filter)
@@ -83,7 +86,7 @@ extension ImageProcessors {
             set { _context.value = newValue }
         }
 
-        private static let _context = Atomic(value: CIContext(options: [.priorityRequestLow: true]))
+        private static let _context = Mutex(value: CIContext(options: [.priorityRequestLow: true]))
 
         static func applyFilter(named name: String, parameters: [String: Any] = [:], to image: PlatformImage) throws -> PlatformImage {
             guard let filter = CIFilter(name: name, parameters: parameters) else {

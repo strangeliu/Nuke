@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 import CryptoKit
@@ -31,13 +31,6 @@ extension URL {
     }
 }
 
-extension OperationQueue {
-    convenience init(maxConcurrentCount: Int) {
-        self.init()
-        self.maxConcurrentOperationCount = maxConcurrentCount
-    }
-}
-
 extension ImageRequest.Priority {
     var taskPriority: TaskPriority {
         switch self {
@@ -50,14 +43,14 @@ extension ImageRequest.Priority {
     }
 }
 
-final class AnonymousCancellable: Cancellable {
+struct AnonymousCancellable: Cancellable {
     let onCancel: @Sendable () -> Void
-
-    init(_ onCancel: @Sendable @escaping () -> Void) {
-        self.onCancel = onCancel
-    }
 
     func cancel() {
         onCancel()
     }
+}
+
+@concurrent func performInBackground<T>(_ closure: @Sendable () -> T) async -> T {
+    closure()
 }

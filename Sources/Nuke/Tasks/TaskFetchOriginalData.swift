@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -13,6 +13,11 @@ final class TaskFetchOriginalData: AsyncPipelineTask<(Data, URLResponse?)>, @unc
     private var data = Data()
 
     override func start() {
+        if case .data(let closure) = request.resource {
+            loadAsyncData(closure)
+            return
+        }
+
         guard let urlRequest = request.urlRequest, let url = urlRequest.url else {
             // A malformed URL prevented a URL request from being initiated.
             send(error: .dataLoadingFailed(error: URLError(.badURL)))
@@ -46,26 +51,22 @@ final class TaskFetchOriginalData: AsyncPipelineTask<(Data, URLResponse?)>, @unc
 
     private func loadData(urlRequest: URLRequest) {
         if request.options.contains(.skipDataLoadingQueue) {
-            loadData(urlRequest: urlRequest, finish: { /* do nothing */ })
+            Task { @ImagePipelineActor in
+                await self.performDataLoad(urlRequest: urlRequest)
+            }
         } else {
             // Wrap data request in an operation to limit the maximum number of
             // concurrent data tasks.
-            operation = pipeline.configuration.dataLoadingQueue.add { [weak self] finish in
-                guard let self else {
-                    return finish()
-                }
-                self.pipeline.queue.async {
-                    self.loadData(urlRequest: urlRequest, finish: finish)
-                }
+            operation = pipeline.configuration.dataLoadingQueue.add { [weak self] in
+                guard let self else { return }
+                await self.performDataLoad(urlRequest: urlRequest)
             }
         }
     }
 
-    // This methods gets called inside data loading operation (Operation).
-    private func loadData(urlRequest: URLRequest, finish: @escaping () -> Void) {
-        guard !isDisposed else {
-            return finish()
-        }
+    private func performDataLoad(urlRequest: URLRequest) async {
+        guard !isDisposed else { return }
+
         // Read and remove resumable data from cache (we're going to insert it
         // back in the cache if the request fails to complete again).
         var urlRequest = urlRequest
@@ -80,67 +81,97 @@ final class TaskFetchOriginalData: AsyncPipelineTask<(Data, URLResponse?)>, @unc
 
         signpost(self, "LoadImageData", .begin, "URL: \(urlRequest.url?.absoluteString ?? ""), resumable data: \(Formatter.bytes(resumableData?.data.count ?? 0))")
 
-        let dataLoader = pipeline.delegate.dataLoader(for: request, pipeline: pipeline)
-        let dataTask = dataLoader.loadData(with: urlRequest, didReceiveData: { [weak self] data, response in
-            guard let self else { return }
-            self.pipeline.queue.async {
-                self.dataTask(didReceiveData: data, response: response)
-            }
-        }, completion: { [weak self] error in
-            finish() // Finish the operation!
-            guard let self else { return }
-            signpost(self, "LoadImageData", .end, "Finished with size \(Formatter.bytes(self.data.count))")
-            self.pipeline.queue.async {
-                self.dataTaskDidFinish(error: error)
-            }
-        })
-
         onCancelled = { [weak self] in
             guard let self else { return }
-
             signpost(self, "LoadImageData", .end, "Cancelled")
-            dataTask.cancel()
-            finish() // Finish the operation!
-
             self.tryToSaveResumableData()
+        }
+
+        let dataLoader = pipeline.delegate.dataLoader(for: request, pipeline: pipeline)
+
+        do {
+            urlRequest = try await pipeline.delegate.willLoadData(for: request, urlRequest: urlRequest, pipeline: pipeline)
+
+            var responseProcessed = false
+            for try await (chunk, urlResponse) in dataLoader.loadData(with: urlRequest) {
+                guard !isDisposed else { return }
+                if !responseProcessed {
+                    responseProcessed = true
+                    try dataTask(didReceiveResponse: urlResponse)
+                }
+                try dataTask(didReceiveData: chunk, response: urlResponse)
+            }
+
+            signpost(self, "LoadImageData", .end, "Finished with size \(Formatter.bytes(self.data.count))")
+            dataTaskDidFinish()
+        } catch {
+            signpost(self, "LoadImageData", .end, "Failed")
+            if let error = error as? ImagePipeline.Error {
+                dataTaskDidFinish(error: error)
+            } else {
+                dataTaskDidFinish(error: .dataLoadingFailed(error: error))
+            }
         }
     }
 
-    private func dataTask(didReceiveData chunk: Data, response: URLResponse) {
-        // Check if this is the first response.
-        if urlResponse == nil {
-            // See if the server confirmed that the resumable data can be used
-            if let resumableData, ResumableData.isResumedResponse(response) {
-                data = resumableData.data
-                resumedDataCount = Int64(resumableData.data.count)
-                signpost(self, "LoadImageData", .event, "Resumed with data \(Formatter.bytes(resumedDataCount))")
+    /// Processes the initial response. Returns `false` if the size limit is
+    /// exceeded early (based on expected content length).
+    private func dataTask(didReceiveResponse response: URLResponse) throws(ImagePipeline.Error) {
+        // See if the server confirmed that the resumable data can be used
+        if let resumableData, ResumableData.isResumedResponse(response) {
+            data = resumableData.data
+            resumedDataCount = Int64(resumableData.data.count)
+            let expectedSize = response.expectedContentLength + resumedDataCount
+            if expectedSize > 0, expectedSize <= Int.max {
+                data.reserveCapacity(Int(expectedSize))
             }
-            resumableData = nil // Get rid of resumable data
+            signpost(self, "LoadImageData", .event, "Resumed with data \(Formatter.bytes(resumedDataCount))")
         }
+        resumableData = nil // Get rid of resumable data
 
+        // Check the expected size early to avoid a large `reserveCapacity`
+        // allocation when the server reports a content length above the limit.
+        if let maximumResponseDataSize = pipeline.configuration.maximumResponseDataSize {
+            let expectedSize = response.expectedContentLength + resumedDataCount
+            if expectedSize > 0, expectedSize > maximumResponseDataSize {
+                throw .dataDownloadExceededMaximumSize
+            }
+        }
+    }
+
+    /// Processes a data chunk. Returns `false` when the size limit is exceeded.
+    private func dataTask(didReceiveData chunk: Data, response: URLResponse) throws(ImagePipeline.Error) {
         // Append data and save response
         if data.isEmpty {
             data = chunk
+            if response.expectedContentLength > chunk.count, response.expectedContentLength <= Int.max {
+                data.reserveCapacity(Int(response.expectedContentLength))
+            }
         } else {
             data.append(chunk)
         }
         urlResponse = response
 
+        if let maximumResponseDataSize = pipeline.configuration.maximumResponseDataSize, data.count > maximumResponseDataSize {
+            throw .dataDownloadExceededMaximumSize
+        }
+
         let progress = TaskProgress(completed: Int64(data.count), total: response.expectedContentLength + resumedDataCount)
         send(progress: progress)
 
-        // If the image hasn't been fully loaded yet, give decoder a change
+        // If the image hasn't been fully loaded yet, give decoder a chance
         // to decode the data chunk. In case `expectedContentLength` is `0`,
         // progressive decoding doesn't run.
         guard data.count < response.expectedContentLength else { return }
-
         send(value: (data, response))
     }
 
-    private func dataTaskDidFinish(error: Swift.Error?) {
+    private func dataTaskDidFinish(error: ImagePipeline.Error? = nil) {
+        guard !isDisposed else { return }
+
         if let error {
             tryToSaveResumableData()
-            send(error: .dataLoadingFailed(error: error))
+            send(error: error)
             return
         }
 
@@ -154,6 +185,41 @@ final class TaskFetchOriginalData: AsyncPipelineTask<(Data, URLResponse?)>, @unc
         storeDataInCacheIfNeeded(data)
 
         send(value: (data, urlResponse), isCompleted: true)
+    }
+
+    // MARK: Async Data Loading
+
+    private func loadAsyncData(_ fetch: @Sendable @escaping () async throws -> Data) {
+        if request.options.contains(.skipDataLoadingQueue) {
+            Task { await self.performAsyncDataLoad(fetch) }
+        } else {
+            operation = pipeline.configuration.dataLoadingQueue.add { [weak self] in
+                await self?.performAsyncDataLoad(fetch)
+            }
+        }
+    }
+
+    private func performAsyncDataLoad(_ fetch: @Sendable @escaping () async throws -> Data) async {
+        guard !isDisposed else { return }
+        do {
+            let data = try await fetch()
+            asyncDataDidFinish(data)
+        } catch {
+            send(error: .dataLoadingFailed(error: error))
+        }
+    }
+
+    private func asyncDataDidFinish(_ data: Data) {
+        guard !data.isEmpty else {
+            send(error: .dataIsEmpty)
+            return
+        }
+        storeDataInCacheIfNeeded(data)
+        send(value: (data, nil), isCompleted: true)
+    }
+
+    private func asyncDataDidFail(_ error: Error) {
+        send(error: .dataLoadingFailed(error: error))
     }
 
     private func tryToSaveResumableData() {
@@ -186,7 +252,7 @@ extension AsyncPipelineTask where Value == (Data, URLResponse?) {
     private func makeSanitizedRequest() -> ImageRequest {
         var request = request
         request.processors = []
-        request.userInfo[.thumbnailKey] = nil
+        request.thumbnail = nil
         return request
     }
 

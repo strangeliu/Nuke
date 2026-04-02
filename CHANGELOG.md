@@ -1,6 +1,123 @@
+## Release History
+
+| Version          | Date         | Swift | Xcode | Platforms                                                   |
+|------------------|--------------|-------|-------|-------------------------------------------------------------|
+| [13.0](#nuke-13) | Mar 22, 2026 | 6.2   | 26.0  | iOS 15.0, watchOS 8.0, macOS 12.0, tvOS 13.0, visionOS 1.0  |
+| [12.0](#nuke-12) | Mar 4, 2023  | 5.7   | 14.1  | iOS 13.0, watchOS 6.0, macOS 10.15, tvOS 13.0               |
+| [11.0](#nuke-11) | Jul 20, 2022 | 5.6   | 13.3  | iOS 13.0, watchOS 6.0, macOS 10.15, tvOS 13.0               |
+| [10.0](#nuke-10) | June 1, 2021 | 5.3   | 12.0  | iOS 11.0, watchOS 4.0, macOS 10.13, tvOS 11.0               |
+| [9.0](#nuke-9)   | May 20, 2020 | 5.1   | 11.0  | iOS 11.0, watchOS 4.0, macOS 10.13, tvOS 11.0               |
+| [8.0](#nuke-8)   | July 8, 2019 | 5.0   | 10.2  | iOS 10.0, watchOS 3.0, macOS 10.12, tvOS 10.0               |
+| [7.6](#nuke-7)   | Apr 7, 2019  | 4.2   | 10.1  | iOS 10.0, watchOS 3.0, macOS 10.12, tvOS 10.0               |
+| [6.0](#nuke-6)   | Dec 23, 2017 | 4.0   | 9.2   | iOS 9.0, watchOS 2.0, macOS 10.11, tvOS 9.0                 |
+| [5.0](#nuke-5)   | Feb 1, 2017  | 3.0   | 8.0   | iOS 9.0, watchOS 2.0, macOS 10.11, tvOS 9.0                 |
+| [4.0](#nuke-4)   | Sep 19, 2016 | 3.0   | 8.0   | iOS 9.0, watchOS 2.0, macOS 10.11, tvOS 9.0                 |
+| [3.0](#nuke-3)   | Mar 26, 2016 | 2.2   | 7.3   | iOS 8.0, watchOS 2.0, macOS 10.9, tvOS 9.0                  |
+| [2.0](#nuke-2)   | Feb 6, 2016  | 2.0   | 7.1   | iOS 8.0, watchOS 2.0, macOS 10.9, tvOS 9.0                  |
+| [1.0](#nuke-1)   | Oct 18, 2015 | 2.0   | 7.0   | iOS 8.0, watchOS 2.0, macOS 10.9                            |
+| [0.2](#nuke-0x)  | Sep 18, 2015 | 2.0   | 7.0   | iOS 8.0, watchOS 2.0                                        |
+
+# Nuke 13
+
+## Nuke 13.0.1
+
+*Mar 29, 2026*
+
+- Fix `ThumbnailOptions` double-applying EXIF orientation when `createThumbnailWithTransform` is enabled – https://github.com/kean/Nuke/issues/870
+- Fix Xcode 26.0 compatibility – https://github.com/kean/Nuke/issues/871
+
+## Nuke 13.0
+
+*Mar 22, 2026*
+
+Nuke 13 achieves full Data Race Safety by migrating all pipeline work to Swift Concurrency, replacing `DispatchQueue` and `OperationQueue` with a `@globalActor`-based synchronization model. It also ships over 10 new APIs, including progressive preview policies, a `willLoadData` auth hook, memory size limits, and type-safe `ImageRequest` properties.
+
+**Requirements**
+
+- Minimum supported Xcode version: 26.0.
+- Minimum required platforms: iOS 13.0, tvOS 13.0, watchOS 6.0, macOS 10.15.
+
+**Concurrency & Data Race Safety**
+
+- Replace the internal serial `DispatchQueue` with a `@globalActor` (`ImagePipelineActor`) for pipeline synchronization, making thread-safety compiler-enforced. The actor is public so that custom `ImagePipeline.Delegate` implementations can use it when needed to reduce thread hops
+- Replace `OperationQueue`-based scheduling with a custom `TaskQueue` synchronized on `ImagePipelineActor`. Background operations like image processing and decoding now run on the default Swift Concurrency executors, eliminating unnecessary thread hops. The entire pipeline is now a good Swift Concurrency citizen
+- Add typed throws (`throws(ImagePipeline.Error)`) to `ImageTask.image`, `ImageTask.response`, `ImagePipeline.image(for:)`, and `ImagePipeline.data(for:)`. Add `ImagePipeline.Error.cancelled` case. Cancellation now throws this instead of `CancellationError`.
+- Change `userInfo` type from `[UserInfoKey: Any]` to `[UserInfoKey: any Sendable]` in both `ImageRequest` and `ImageContainer`
+- Add `@MainActor @Sendable` to completion-based `loadImage`/`loadData` closure parameters
+- Add `@MainActor @Sendable` to `progress` and `completion` closures in `NukeExtensions` `loadImage` functions
+- Add `@MainActor @Sendable` to all callback closures in `NukeUI`: `FetchImage.onStart`/`onCompletion`, `LazyImage.onStart`/`onCompletion` modifiers, `LazyImageView.onStart`/`onPreview`/`onProgress`/`onSuccess`/`onFailure`/`onCompletion`
+- Eliminate an actor hop during `ImageTask` startup, reducing per-request overhead
+- Synchronize `ResumableDataStorage` on `ImagePipelineActor`, replacing `NSLock` with actor isolation and removing `@unchecked Sendable`.
+- Convert unit tests to Swift Testing and enable Swift 6 mode for all tests
+
+**Quality**
+
+The test suite was rewritten in Swift Testing with Swift 6 mode enabled and significantly expanded. Despite the additional tests, the suite is 3x faster thanks to the parallelization.
+
+| Version   | Source lines | Tests | Test lines | Coverage | Time |
+|-----------|--------------|-------|------------|----------|------|
+| Nuke 13.0 | 4,669        | 768   | 8,509      | 96.0%    | 1.3s |
+| Nuke 12.9 | 4,589        | 496   | 6,167      | 92.4%    | 3.5s | 
+
+**New Features**
+
+- Add `ImagePipeline.PreviewPolicy` (`.incremental`, `.thumbnail`, `.disabled`) to control how progressive previews are generated per-request
+- Add `ImagePipelineDelegate.previewPolicy(for:pipeline:)` for customizing the policy dynamically. Default policy: `.incremental` for progressive JPEGs and GIFs, `.disabled` for everything else (baseline JPEGs, PNGs, etc.), restoring the original behavior before `CGImageSourceCreateIncremental` was adopted
+- Add `ImagePipeline.Delegate.willLoadData(for:urlRequest:pipeline:)`, an async, throwing hook that intercepts the `URLRequest` just before data loading begins. Use it to inject auth tokens, sign requests, or perform any async pre-flight work. Throw to cancel with a meaningful error (e.g., when a token refresh fails). Default implementation returns the request unchanged — https://github.com/kean/Nuke/issues/774
+- Add `ImageRequest.init(id:image:)` that accepts an async closure returning an `ImageContainer` directly. Use it to process images already in memory or to integrate with systems that provide pre-decoded images (e.g., Photos framework). The image skips data decoding entirely and is loaded in `TaskFetchOriginalImage` – https://github.com/kean/Nuke/issues/823
+- Add type-safe `imageID`, `scale`, and `thumbnail` properties to `ImageRequest`, replacing the previous `userInfo` dictionary-based approach. The new properties are more ergonomic and improve performance by eliminating dictionary lookups and `Any` boxing. The `userInfo[.imageIdKey]`, `userInfo[.scaleKey]`, and `userInfo[.thumbnailKey]` keys are deprecated. The new `imageID` property replaces `imageId` to follow idiomatic Swift naming (uppercase "ID") and is now also writable – https://github.com/kean/Nuke/issues/772
+- Add `ImagePipeline.Configuration.progressiveDecodingInterval` (default: 0.5s) to throttle progressive decoding attempts when data arrives faster than the interval
+- Add `ImagePipeline.Configuration.maximumResponseDataSize` — downloads that exceed this limit are automatically cancelled. The default limit is based on the device's physical memory. Set to `nil` to disable — https://github.com/kean/Nuke/issues/738
+- Add `ImagePipeline.Configuration.maximumDecodedImageSize` — images whose decoded bitmap would exceed this limit are automatically downscaled during decoding. The default limit is calculated dynamically based on the device's physical memory. Set to `nil` to disable
+- Add `DataCache.isSweepEnabled` (`true` by default). Set it to `false` in targets that share a cache with the main app (e.g. a Notification Service Extension) so that only the main app enforces size limits via LRU sweeps
+- Add `AssetType.ico` with magic-byte detection for ICO (Windows icon) images
+- Add `ImageTask.Event.started`
+- Mark all public enums as `@frozen` (except error enums and empty namespaces)
+
+**Performance**
+
+- Rewrite `ImageProcessors.GaussianBlur` to use Accelerate (`vImageBoxConvolve`) instead of Core Image, fixing gray border artifacts and improving performance ~5.8x — https://github.com/kean/Nuke/issues/308
+- Optimize data downloading by pre-allocating the buffer using the expected content size from the HTTP response, reducing memory reallocations during image downloads (this only applies when progressive decoding is on) — https://github.com/kean/Nuke/issues/738
+- Update `ImageCache.defaultCostLimit` to 15% of physical memory and a hard cap of 768 MB (previously 20% capped at 512 MB). The cache uses a custom LRU policy that enforces limits precisely, so 15% is effectively more generous than the previous capped value on modern devices – https://github.com/kean/Nuke/issues/838
+- The storage cost limit of `ResumableDataStorage` is now dynamic and varies depending on the available RAM.
+- Add `consuming` to `LazyImage` builder methods (`processors`, `priority`, `pipeline`, `onStart`, `onDisappear`, `onCompletion`) and `ImageContainer.map(_:)`
+
+**API Changes**
+
+- Rename `ImagePipelineDelegate` to `ImagePipeline.Delegate`. A deprecated `ImagePipelineDelegate` typealias is provided for backward compatibility
+- Refactor `ImageDecoders.Default` to fully delegate incremental decoding to Image I/O via `CGImageSourceCreateIncremental`
+- Remove `queue` parameter from completion-based `loadImage`/`loadData` methods — callbacks now always run on the main queue
+- Remove `ImageTask.Event.cancelled` in favor of `.finished(.failure(.cancelled))` — cancellation is now uniformly represented as a failure result
+- Remove `ImageRequest.init(id:dataPublisher:)` and internal `TaskFetchWithPublisher`. Use `ImageRequest.init(id:data:)` (async closure) instead — it is now handled directly by `TaskFetchOriginalData`
+- Remove soft-deprecated per-event `ImagePipelineDelegate` methods (`imageTaskDidStart`, `didUpdateProgress`, `didReceivePreview`, `imageTaskDidCancel`, `didCompleteWithResult`). Use `imageTask(_:didReceiveEvent:pipeline:)` instead
+- Remove previously deprecated APIs: `DataCache.isCompressionEnabled`, `ImageProcessors.Resize.ContentMode` typealias, `AsyncImageTask` typealias, `ImagePipeline.Configuration.callbackQueue`, `ImagePipeline.Configuration.dataCachingQueue`, `ImagePipeline.loadData(with: URL)`, and `ImagePipeline.data(for: URL)`
+- Soft-deprecate the `userInfo` parameter in `ImageRequest` initializers in favor of dedicated type-safe properties
+
+**Bug Fixes**
+
+- Fix progressive JPEGs with large EXIF headers not producing previews — `CGImageSourceCreateIncremental` fails to recognize these files until fully downloaded. The decoder now falls back to generating a thumbnail from a non-incremental source. The issue was raised by and the initial fix provided by @theop-luma in https://github.com/kean/Nuke/pull/835
+- Fix thumbnail requests re-downloading original image data when it is already stored in the disk cache — https://github.com/kean/Nuke/issues/837
+- Fix `ImageTask.state` remaining `.running` after completion when using the completion-based `loadImage` API
+- Fix `ImageDecoders.Video.decode(_:)` returning an empty image instead of a video thumbnail — https://github.com/kean/Nuke/issues/811
+- Fix `VideoPlayerView` accumulating duplicate `AVPlayerItemDidPlayToEndTime` observers on each `play()`/`reset()` cycle, causing `onVideoFinished` to fire multiple times — https://github.com/kean/Nuke/issues/818
+
 # Nuke 12
 
-## Nuke 12.8.0
+## Nuke 12.9
+
+*Feb 22, 2026*
+
+- Enable Swift 6 and fix remaining concurrency warnings
+- Optimize `ImageTask` `AsyncStream` APIs and remove the Combine dependency. It now essentially has no overhead.
+- Updating misleading SVG support by @realmtai in https://github.com/kean/Nuke/pull/839
+- Fix deprecation warning typo by @cameronmcefee in https://github.com/kean/Nuke/pull/861
+- Mark `DataLoading` closures as `@Sendable` by @plu in https://github.com/kean/Nuke/pull/862
+- `.storeAll` now stores processed images for locals too, as it should be by @HyperfocusDisordered in https://github.com/kean/Nuke/pull/810
+- Add `.heic` support to `AssetType/init` so it can detect it based on the input `Data`
+- Remove some `@unchecked` markers from `Sendable` types for better Data Race Safety checking
+- Fix an issue with `DataCache` not touching `.contentAccessDate` when accessing files
+
+## Nuke 12.8
 
 *Jul 13, 2024*
 
@@ -72,7 +189,7 @@ This release contains major improvements to the Structured Concurrency support a
 - Fix Xcode 15.3 concurrency warnings when using `Screen.scale` by @jszumski in https://github.com/kean/Nuke/pull/766
 - Add `showPlaceholderOnFailure` parameter to show placeholder in case of image loading failure by @mlight3 in https://github.com/kean/Nuke/pull/764
 - Fix image loading test on iOS 17 by @woxtu in https://github.com/kean/Nuke/pull/768
-- Update thumbnail key value for `ImageRequest`` by @woxtu in https://github.com/kean/Nuke/pull/769
+- Update thumbnail key value for `ImageRequest` by @woxtu in https://github.com/kean/Nuke/pull/769
 - Remove trailing whitespaces by @woxtu in https://github.com/kean/Nuke/pull/767
 - Apply `if let` shorthand syntax by @mlight3 in https://github.com/kean/Nuke/pull/762
 
@@ -157,7 +274,7 @@ Nuke 12 enhances the two main APIs introduced in the previous release: `LazyImag
 
 > The [migration guide](https://github.com/kean/Nuke/blob/nuke-12/Documentation/Migrations/Nuke%2012%20Migration%20Guide.md) is available to help with the update. The minimum requirements are unchanged from Nuke 11.
 
-## Concurrency
+### Concurrency
 
 Redesign the concurrency APIs making them more ergonomic and fully `Sendable` compliant.
 
@@ -176,7 +293,7 @@ let image = try await task.image
 - Remove the `delegate` parameter from `ImagePipeline/image(for:)` method to address the upcoming concurrency warnings in Xcode 14.3
 - Remove `ImageTaskDelegate` and move its methods to `ImagePipelineDelegate` and add the `pipeline` parameter
 
-## NukeUI 2.0
+### NukeUI 2.0
 
 NukeUI started as a separate [repo](https://github.com/kean/NukeUI), but the initial production version was released as part of [Nuke 11](https://github.com/kean/Nuke/releases/tag/11.0.0). Let's call it NukeUI 1.0. The framework was designed before the [`AsyncImage`](https://developer.apple.com/documentation/swiftui/asyncimage) announcement and had a few discrepancies that made it harder to migrate from `AsyncImage`. This release addresses the shortcomings of the original design and features a couple of performance improvements.
 
@@ -191,7 +308,7 @@ NukeUI started as a separate [repo](https://github.com/kean/NukeUI), but the ini
 - `FetchImage/image` now returns `Image` instead of `UIImage`
 - Make `_PlatformImageView` internal (was public) and remove more typealiases
 
-## Nuke
+### Nuke
 
 - Add a new initializer to `ImageRequest.ThumbnailOptions` that accepts the target size, unit, and content mode - [#677](https://github.com/kean/Nuke/pull/677)
 - ImageCache uses 20% of available RAM which is quite aggressive. It's an OK default on iOS because it clears 90% of the used RAM when entering the background to be a good citizen. But it's not a good default on a Mac. Starting with Nuke 12, the default size is now strictly limited to 512 MB.
@@ -199,7 +316,7 @@ NukeUI started as a separate [repo](https://github.com/kean/NukeUI), but the ini
 - Removes APIs deprecated in the previous versions
 - Update the [Performance Guide](https://kean-docs.github.io/nuke/documentation/nuke/performance-guide)
 
-## NukeVideo
+### NukeVideo
 
 Video playback can be significantly [more efficient](https://web.dev/replace-gifs-with-videos/) than playing animated GIFs. This is why the initial version of NukeUI provided support for basic video playback. But it is not something that the majority of the users need, so this feature was extracted to a separate module called `NukeVideo`.
 
@@ -255,7 +372,7 @@ There is now less code that you need to include in your project, which means fas
 
 *Dec 25, 2022*
 
-- Fix `ImagePipeline.shared` warning with Strit Concurrency Checking set to Complete
+- Fix `ImagePipeline.shared` warning with Strict Concurrency Checking set to Complete
 - Fix an issue where `ImagePrefetcher/didComplete` wasn't called in some scenarios
 - `ImagePrefetcher/didComplete` is now called on the main queue
 
@@ -540,8 +657,8 @@ This release added async/await, but the change was [reverted](https://github.com
 
 *Oct 23, 2021*
 
-- Improve image decompressiong performance on iOS 15 and tvOS 15 by using [preparingForDisplay()](https://developer.apple.com/documentation/uikit/uiimage/3750834-preparingfordisplay?language=o_5) (requires Xcode 13) - [#512](https://github.com/kean/Nuke/pull/512)
-- On iOS 15, tvOS 15, image decompressiong now preserves 8 bits per pixel for grayscale images - [#512](https://github.com/kean/Nuke/pull/512)
+- Improve image decompression performance on iOS 15 and tvOS 15 by using [preparingForDisplay()](https://developer.apple.com/documentation/uikit/uiimage/3750834-preparingfordisplay?language=o_5) (requires Xcode 13) - [#512](https://github.com/kean/Nuke/pull/512)
+- On iOS 15, tvOS 15, image decompression now preserves 8 bits per pixel for grayscale images - [#512](https://github.com/kean/Nuke/pull/512)
 - Adopt extended static member lookup ([SE-0299](https://github.com/apple/swift-evolution/blob/main/proposals/0299-extend-generic-static-member-lookup.md)) (requires Xcode 13) - [#513](https://github.com/kean/Nuke/pull/513)
 
 ```swift
@@ -565,7 +682,7 @@ ImageRequest(url: url, processors: [.resize(width: 320)])
 
 *Aug 28, 2021*
 
-- Add an API for efficiently image thumbnails or retrieving existings ones - [#503](https://github.com/kean/Nuke/pull/503)
+- Add an API for efficiently creating image thumbnails or retrieving existing ones - [#503](https://github.com/kean/Nuke/pull/503)
 - Fix an issue with scale (`ImageRequest.UserInfoKey.scaleKey`) not being applied to progressively decoded images
 
 ## Nuke 10.3.4
@@ -2327,7 +2444,6 @@ This is a pre-1.0 version, first major release which is going to be available so
 - ImageResponseInfo is now a struct
 - CachedImageResponse renamed to ImageCachedResponse; userInfo is now Any?
 - Multiple improvements across the board
-
 
 ## Nuke 0
 

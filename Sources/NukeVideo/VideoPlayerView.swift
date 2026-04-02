@@ -1,13 +1,8 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-#if swift(>=6.0)
 import AVKit
-#else
-@preconcurrency import AVKit
-#endif
-
 import Foundation
 
 #if os(macOS)
@@ -16,21 +11,25 @@ public typealias _PlatformBaseView = NSView
 public typealias _PlatformBaseView = UIView
 #endif
 
+/// A view that plays video content using AVKit.
+///
+/// Use ``asset`` to set the video to play and ``play()`` to start playback.
+/// The view loops video by default and is muted.
 @MainActor
 public final class VideoPlayerView: _PlatformBaseView {
     // MARK: Configuration
 
-    /// `.resizeAspectFill` by default.
+    /// The video gravity. `.resizeAspectFill` by default.
     public var videoGravity: AVLayerVideoGravity = .resizeAspectFill {
         didSet {
             _playerLayer?.videoGravity = videoGravity
         }
     }
 
-    /// `true` by default. If disabled, the video will resize with the frame without animations
+    /// `true` by default. If disabled, the video will resize with the frame without animations.
     public var animatesFrameChanges = true
 
-    /// `true` by default. If disabled, will only play a video once.
+    /// `true` by default. If disabled, the player will only play the video once.
     public var isLooping = true {
         didSet {
             guard isLooping != oldValue else { return }
@@ -41,11 +40,12 @@ public final class VideoPlayerView: _PlatformBaseView {
         }
     }
 
-    /// Add if you want to do something at the end of the video
+    /// A closure called when the video finishes playing.
     public var onVideoFinished: (() -> Void)?
 
     // MARK: Initialization
 
+    /// The underlying player layer. Created lazily on first access.
     public var playerLayer: AVPlayerLayer {
         if let layer = _playerLayer {
             return layer
@@ -89,18 +89,24 @@ public final class VideoPlayerView: _PlatformBaseView {
 
     private var player: AVPlayer? {
         didSet {
-            registerNotifications()
+            unregisterNotifications()
+            if player != nil {
+                registerNotifications()
+            }
         }
     }
 
     private var playerObserver: AnyObject?
 
+    /// Stops playback and removes the current player, releasing associated resources.
     public func reset() {
         _playerLayer?.player = nil
         player = nil
         playerObserver = nil
     }
 
+    /// The video asset to play. Setting a new asset prepares the view for playback;
+    /// call ``play()`` to start.
     public var asset: AVAsset? {
         didSet { assetDidChange() }
     }
@@ -109,6 +115,13 @@ public final class VideoPlayerView: _PlatformBaseView {
         if asset == nil {
             reset()
         }
+    }
+
+    private func unregisterNotifications() {
+        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
+#if os(iOS) || os(tvOS) || os(visionOS)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
+#endif
     }
 
     private func registerNotifications() {
@@ -129,11 +142,16 @@ public final class VideoPlayerView: _PlatformBaseView {
 #endif
     }
 
+    /// Seeks to the beginning and resumes playback.
     public func restart() {
         player?.seek(to: CMTime.zero)
         player?.play()
     }
 
+    /// Creates a player for the current ``asset`` and starts playback.
+    ///
+    /// The video is muted and set to loop by default. Playback begins once the
+    /// player item is ready.
     public func play() {
         guard let asset else {
             return

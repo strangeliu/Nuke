@@ -1,64 +1,121 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
 @testable import Nuke
 
-class ImagePipelineFormatsTests: XCTestCase {
-    var dataLoader: MockDataLoader!
-    var pipeline: ImagePipeline!
+@Suite(.timeLimit(.minutes(2)))
+struct ImagePipelineFormatsTests {
+    let dataLoader: MockDataLoader
+    let pipeline: ImagePipeline
 
-    override func setUp() {
-        super.setUp()
-
-        dataLoader = MockDataLoader()
-        pipeline = ImagePipeline {
+    init() {
+        let dataLoader = MockDataLoader()
+        self.dataLoader = dataLoader
+        self.pipeline = ImagePipeline {
             $0.dataLoader = dataLoader
             $0.imageCache = nil
         }
     }
 
-    func testExtendedColorSpaceSupport() throws {
+    @Test func extendedColorSpaceSupport() async throws {
         // Given
         dataLoader.results[Test.url] = .success(
             (Test.data(name: "image-p3", extension: "jpg"), URLResponse(url: Test.url, mimeType: "jpeg", expectedContentLength: 20, textEncodingName: nil))
         )
 
         // When
-        var result: Result<ImageResponse, ImagePipeline.Error>?
-        expect(pipeline).toLoadImage(with: Test.request) {
-            result = $0
-        }
-        wait()
+        let response = try await pipeline.imageTask(with: Test.request).response
 
         // Then
-        let image = try XCTUnwrap(result?.value?.image)
-        let cgImage = try XCTUnwrap(image.cgImage)
-        let colorSpace = try XCTUnwrap(cgImage.colorSpace)
+        let image = response.image
+        let cgImage = try #require(image.cgImage)
+        let colorSpace = try #require(cgImage.colorSpace)
 #if os(iOS) || os(tvOS) || os(macOS) || os(visionOS)
-        XCTAssertTrue(colorSpace.isWideGamutRGB)
+        #expect(colorSpace.isWideGamutRGB)
 #elseif os(watchOS)
-        XCTAssertFalse(colorSpace.isWideGamutRGB)
+        #expect(!colorSpace.isWideGamutRGB)
 #endif
     }
 
-    func testGrayscaleSupport() throws {
+    @Test func grayscaleSupport() async throws {
         // Given
         dataLoader.results[Test.url] = .success(
             (Test.data(name: "grayscale", extension: "jpeg"), URLResponse(url: Test.url, mimeType: "jpeg", expectedContentLength: 20, textEncodingName: nil))
         )
 
         // When
-        var result: Result<ImageResponse, ImagePipeline.Error>?
-        expect(pipeline).toLoadImage(with: Test.request) {
-            result = $0
-        }
-        wait()
+        let response = try await pipeline.imageTask(with: Test.request).response
 
         // Then
-        let image = try XCTUnwrap(result?.value?.image)
-        let cgImage = try XCTUnwrap(image.cgImage)
-        XCTAssertEqual(cgImage.bitsPerComponent, 8)
+        let image = response.image
+        let cgImage = try #require(image.cgImage)
+        #expect(cgImage.bitsPerComponent == 8)
     }
+
+    // MARK: - Image Formats
+
+    @Test func loadPNG() async throws {
+        // GIVEN a pipeline that returns PNG data
+        dataLoader.results[Test.url] = .success(
+            (Test.data(name: "fixture", extension: "png"),
+             URLResponse(url: Test.url, mimeType: "png", expectedContentLength: 0, textEncodingName: nil))
+        )
+
+        // WHEN
+        let response = try await pipeline.imageTask(with: Test.request).response
+
+        // THEN the image is decoded correctly
+        #expect(response.container.type == .png)
+        #expect(response.image.sizeInPixels == CGSize(width: 640, height: 360))
+    }
+
+    @Test func loadGIF() async throws {
+        // GIVEN a pipeline that returns GIF data
+        dataLoader.results[Test.url] = .success(
+            (Test.data(name: "cat", extension: "gif"),
+             URLResponse(url: Test.url, mimeType: "gif", expectedContentLength: 0, textEncodingName: nil))
+        )
+
+        // WHEN
+        let response = try await pipeline.imageTask(with: Test.request).response
+
+        // THEN GIF data is preserved in the container for animated playback
+        #expect(response.container.type == .gif)
+        #expect(response.container.data != nil)
+    }
+
+    @Test func loadHEIC() async throws {
+        // GIVEN a pipeline that returns HEIC data
+        dataLoader.results[Test.url] = .success(
+            (Test.data(name: "img_751", extension: "heic"),
+             URLResponse(url: Test.url, mimeType: "heic", expectedContentLength: 0, textEncodingName: nil))
+        )
+
+        // WHEN
+        let response = try await pipeline.imageTask(with: Test.request).response
+
+        // THEN image is decoded correctly
+        #expect(response.container.type == .heic)
+        #expect(response.image.sizeInPixels != .zero)
+    }
+
+#if os(iOS) || os(macOS) || os(visionOS)
+    @Test func loadWebP() async throws {
+        // GIVEN a pipeline that returns WebP data
+        dataLoader.results[Test.url] = .success(
+            (Test.data(name: "baseline", extension: "webp"),
+             URLResponse(url: Test.url, mimeType: "webp", expectedContentLength: 0, textEncodingName: nil))
+        )
+
+        // WHEN
+        let response = try await pipeline.imageTask(with: Test.request).response
+
+        // THEN image is decoded correctly
+        #expect(response.container.type == .webp)
+        #expect(response.image.sizeInPixels == CGSize(width: 550, height: 368))
+    }
+#endif
 }

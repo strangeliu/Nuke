@@ -1,238 +1,483 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
+import ImageIO
 @testable import Nuke
 
-class ImageDecoderTests: XCTestCase {
-    func testDecodePNG() throws {
+@Suite(.timeLimit(.minutes(2)))
+struct ImageDecoderTests {
+    @Test func decodePNG() throws {
         // Given
         let data = Test.data(name: "fixture", extension: "png")
         let decoder = ImageDecoders.Default()
-        
+
         // When
-        let container = try XCTUnwrap(decoder.decode(data))
-        
+        let container = try decoder.decode(data)
+
         // Then
-        XCTAssertEqual(container.type, .png)
-        XCTAssertFalse(container.isPreview)
-        XCTAssertNil(container.data)
-        XCTAssertTrue(container.userInfo.isEmpty)
+        #expect(container.type == .png)
+        #expect(!container.isPreview)
+        #expect(container.data == nil)
+        #expect(container.userInfo.isEmpty)
     }
-    
-    func testDecodeJPEG() throws {
+
+    @Test func decodeJPEG() throws {
         // Given
         let data = Test.data(name: "baseline", extension: "jpeg")
         let decoder = ImageDecoders.Default()
-        
+
         // When
-        let container = try XCTUnwrap(decoder.decode(data))
-        
+        let container = try decoder.decode(data)
+
         // Then
-        XCTAssertEqual(container.type, .jpeg)
-        XCTAssertFalse(container.isPreview)
-        XCTAssertNil(container.data)
-        XCTAssertTrue(container.userInfo.isEmpty)
+        #expect(container.type == .jpeg)
+        #expect(!container.isPreview)
+        #expect(container.data == nil)
+        #expect(container.userInfo.isEmpty)
     }
-    
-    func testDecodingProgressiveJPEG() {
+
+    @Test func decodingProgressiveJPEG() {
         let data = Test.data(name: "progressive", extension: "jpeg")
         let decoder = ImageDecoders.Default()
-        
-        // Just before the Start Of Frame
-        XCTAssertNil(decoder.decodePartiallyDownloadedData(data[0...358]))
-        XCTAssertEqual(decoder.numberOfScans, 0)
-        
-        // Right after the Start Of Frame
-        XCTAssertNil(decoder.decodePartiallyDownloadedData(data[0...359]))
-        XCTAssertEqual(decoder.numberOfScans, 0) // still haven't finished the first scan
-        
-        // Just before the first Start Of Scan
-        XCTAssertNil(decoder.decodePartiallyDownloadedData(data[0...438]))
-        XCTAssertEqual(decoder.numberOfScans, 0) // still haven't finished the first scan
-        
-        // Found the first Start Of Scan
-        XCTAssertNil(decoder.decodePartiallyDownloadedData(data[0...439]))
-        XCTAssertEqual(decoder.numberOfScans, 1)
-        
-        // Found the second Start of Scan
-        let scan1 = decoder.decodePartiallyDownloadedData(data[0...2952])
-        XCTAssertNotNil(scan1)
-        XCTAssertEqual(scan1?.isPreview, true)
+
+        // Not enough data for progressive detection (SOF2 not yet reached)
+        #expect(decoder.decodePartiallyDownloadedData(data[0...358]) == nil)
+        #expect(decoder.numberOfScans == 0)
+
+        // After SOF2 marker, CGImageSource produces previews immediately
+        let scan1 = decoder.decodePartiallyDownloadedData(data[0...500])
+        #expect(scan1 != nil)
+        #expect(scan1?.isPreview == true)
+        #expect(decoder.numberOfScans == 1)
         if let image = scan1?.image {
 #if os(macOS)
-            XCTAssertEqual(image.size.width, 450)
-            XCTAssertEqual(image.size.height, 300)
+            #expect(image.size.width == 450)
+            #expect(image.size.height == 300)
 #else
-            XCTAssertEqual(image.size.width * image.scale, 450)
-            XCTAssertEqual(image.size.height * image.scale, 300)
+            #expect(image.size.width * image.scale == 450)
+            #expect(image.size.height * image.scale == 300)
 #endif
         }
-        XCTAssertEqual(decoder.numberOfScans, 2)
-        XCTAssertEqual(scan1?.userInfo[.scanNumberKey] as? Int, 2)
-        
-        // Feed all data and see how many scans are there
-        // In practice the moment we finish receiving data we call
-        // `decode(data: data, isCompleted: true)` so we might not scan all the
-        // of the bytes and encounter all of the scans (e.g. the final chunk
-        // of data that we receive contains multiple scans).
-        XCTAssertNotNil(decoder.decodePartiallyDownloadedData(data))
-        XCTAssertEqual(decoder.numberOfScans, 10)
+        #expect(scan1?.userInfo[.scanNumberKey] as? Int == 1)
+
+        // More data produces additional previews
+        let scan2 = decoder.decodePartiallyDownloadedData(data[0...5000])
+        #expect(scan2 != nil)
+        #expect(scan2?.isPreview == true)
+        #expect(decoder.numberOfScans == 2)
+
+        // Feed all data
+        let final = decoder.decodePartiallyDownloadedData(data)
+        #expect(final != nil)
+        #expect(decoder.numberOfScans == 3)
     }
-    
-    func testDecodeGIF() throws {
+
+
+    @Test func decodingBaselineJPEG() throws {
+        let data = Test.data(name: "baseline", extension: "jpeg")
+
+        // Default policy for baseline JPEG is .disabled — no previews
+        var context = ImageDecodingContext.mock(data: data)
+        context.previewPolicy = .default(for: data)
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        let partial = decoder.decodePartiallyDownloadedData(data[0...(data.count / 2)])
+        #expect(partial == nil)
+
+        // Full decode always works
+        let container = try decoder.decode(data)
+        #expect(container.type == .jpeg)
+        #expect(!container.isPreview)
+    }
+
+    @Test func decodingBaselineJPEGWithIncrementalPolicy() throws {
+        let data = Test.data(name: "baseline", extension: "jpeg")
+
+        // With .incremental policy, Image I/O produces partial top-down renders
+        var context = ImageDecodingContext.mock(data: data)
+        context.previewPolicy = .incremental
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        let partial = decoder.decodePartiallyDownloadedData(data[0...(data.count / 2)])
+        #expect(partial != nil)
+        #expect(partial?.isPreview == true)
+
+        let container = try decoder.decode(data)
+        #expect(container.type == .jpeg)
+        #expect(!container.isPreview)
+    }
+
+    @Test func decodingBaselineJPEGWithThumbnailPolicy() throws {
+        let data = Test.data(name: "baseline", extension: "jpeg")
+
+        var context = ImageDecodingContext.mock(data: data)
+        context.previewPolicy = .thumbnail
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        // Baseline JPEG typically has no embedded EXIF thumbnail
+        _ = decoder.decodePartiallyDownloadedData(data)
+        // Whether this returns an image depends on the specific file;
+        // either way, subsequent calls should return nil
+        #expect(decoder.decodePartiallyDownloadedData(data) == nil)
+    }
+
+    @Test func decodingProgressiveJPEGWithDisabledPolicy() throws {
+        let data = Test.data(name: "progressive", extension: "jpeg")
+
+        var context = ImageDecodingContext.mock(data: data)
+        context.previewPolicy = .disabled
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        // No previews with .disabled policy
+        #expect(decoder.decodePartiallyDownloadedData(data[0...500]) == nil)
+        #expect(decoder.decodePartiallyDownloadedData(data[0...5000]) == nil)
+        #expect(decoder.numberOfScans == 0)
+
+        // Full decode still works
+        let container = try decoder.decode(data)
+        #expect(container.type == .jpeg)
+    }
+
+    @Test func decodingPNGPartialData() throws {
+        let data = Test.data(name: "fixture", extension: "png")
+
+        // Default policy for PNG is .disabled — no previews
+        var context = ImageDecodingContext.mock(data: data)
+        context.previewPolicy = .default(for: data)
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        #expect(decoder.decodePartiallyDownloadedData(data[0...100]) == nil)
+
+        // Full decode still works
+        let container = try decoder.decode(data)
+        #expect(container.type == .png)
+        #expect(!container.isPreview)
+    }
+
+    @Test func decoderAlwaysCreatedFromContext() throws {
+        // The decoder should always initialize, regardless of image format.
+        let jpegData = Test.data(name: "baseline", extension: "jpeg")
+        let jpegContext = ImageDecodingContext.mock(data: jpegData)
+        #expect(ImageDecoders.Default(context: jpegContext) != nil)
+
+        let pngData = Test.data(name: "fixture", extension: "png")
+        let pngContext = ImageDecodingContext.mock(data: pngData)
+        #expect(ImageDecoders.Default(context: pngContext) != nil)
+
+        let progressiveData = Test.data(name: "progressive", extension: "jpeg")
+        let progressiveContext = ImageDecodingContext.mock(data: progressiveData)
+        #expect(ImageDecoders.Default(context: progressiveContext) != nil)
+    }
+
+    @Test func defaultPreviewPolicy() {
+        // Progressive JPEG → .incremental
+        let progressiveData = Test.data(name: "progressive", extension: "jpeg")
+        #expect(ImagePipeline.PreviewPolicy.default(for: progressiveData) == .incremental)
+
+        // Baseline JPEG → .disabled
+        let baselineData = Test.data(name: "baseline", extension: "jpeg")
+        #expect(ImagePipeline.PreviewPolicy.default(for: baselineData) == .disabled)
+
+        // PNG → .disabled
+        let pngData = Test.data(name: "fixture", extension: "png")
+        #expect(ImagePipeline.PreviewPolicy.default(for: pngData) == .disabled)
+
+        // GIF → .incremental
+        let gifData = Test.data(name: "cat", extension: "gif")
+        #expect(ImagePipeline.PreviewPolicy.default(for: gifData) == .incremental)
+    }
+
+    @Test func decodingTrickyProgressiveJPEG() throws {
+        let data = Test.data(name: "tricky_progressive", extension: "jpeg")
+        let decoder = ImageDecoders.Default()
+
+        // This progressive JPEG has a ~7 KB EXIF header (SOF2 at offset 7394).
+        // CGImageSourceCreateIncremental fails to produce images until enough
+        // data past SOF2 is available. With small chunks, the thumbnail
+        // fallback kicks in first.
+        #expect(decoder.decodePartiallyDownloadedData(data[0...2000]) == nil)
+
+        // With enough data, the decoder produces a preview (either via
+        // thumbnail fallback or incremental decoding).
+        let preview = decoder.decodePartiallyDownloadedData(data[0...8000])
+        #expect(preview != nil)
+        #expect(preview?.isPreview == true)
+        #expect(decoder.numberOfScans == 1)
+
+        // Full decode at full resolution
+        let container = try decoder.decode(data)
+        #expect(container.image.sizeInPixels == CGSize(width: 450, height: 300))
+    }
+
+    @Test func decodeGIF() throws {
         // Given
         let data = Test.data(name: "cat", extension: "gif")
         let decoder = ImageDecoders.Default()
-        
+
         // When
-        let container = try XCTUnwrap(decoder.decode(data))
-        
+        let container = try decoder.decode(data)
+
         // Then
-        XCTAssertEqual(container.type, .gif)
-        XCTAssertFalse(container.isPreview)
-        XCTAssertNotNil(container.data)
-        XCTAssertTrue(container.userInfo.isEmpty)
+        #expect(container.type == .gif)
+        #expect(!container.isPreview)
+        #expect(container.data != nil)
+        #expect(container.userInfo.isEmpty)
     }
-    
-    func testDecodeHEIC() throws {
+
+    @Test func decodeHEIC() throws {
         // Given
         let data = Test.data(name: "img_751", extension: "heic")
         let decoder = ImageDecoders.Default()
-        
+
         // When
-        let container = try XCTUnwrap(decoder.decode(data))
-        
+        let container = try decoder.decode(data)
+
         // Then
-        XCTAssertNil(container.type) // TODO: update when HEIF support is added
-        XCTAssertFalse(container.isPreview)
-        XCTAssertNil(container.data)
-        XCTAssertTrue(container.userInfo.isEmpty)
+        #expect(container.type == AssetType.heic)
+        #expect(!container.isPreview)
+        #expect(container.data == nil)
+        #expect(container.userInfo.isEmpty)
     }
-    
-    func testDecodingGIFDataAttached() throws {
-        let data = Test.data(name: "cat", extension: "gif")
-        XCTAssertNotNil(try ImageDecoders.Default().decode(data).data)
+
+    @Test func decodeICO() throws {
+        // Given
+        let data = Test.data(name: "fixture", extension: "ico")
+        let decoder = ImageDecoders.Default()
+
+        // When
+        let container = try decoder.decode(data)
+
+        // Then
+        #expect(container.type == AssetType.ico)
+        #expect(!container.isPreview)
+        #expect(container.data == nil)
+        #expect(container.userInfo.isEmpty)
+        #expect(container.image.sizeInPixels == CGSize(width: 32, height: 32))
     }
-    
-    func testDecodingGIFPreview() throws {
+
+    @Test func decodingGIFDataAttached() throws {
         let data = Test.data(name: "cat", extension: "gif")
-        XCTAssertEqual(data.count, 427672) // 427 KB
+        #expect(try ImageDecoders.Default().decode(data).data != nil)
+    }
+
+    @Test func decodingGIFPreview() throws {
+        let data = Test.data(name: "cat", extension: "gif")
+        #expect(data.count == 427672) // 427 KB
         let chunk = data[...60000] // 6 KB
         let response = try ImageDecoders.Default().decode(chunk)
-        XCTAssertEqual(response.image.sizeInPixels, CGSize(width: 500, height: 279))
+        #expect(response.image.sizeInPixels == CGSize(width: 500, height: 279))
     }
-    
-    func testDecodingGIFPreviewGeneratedOnlyOnce() throws {
+
+    @Test func decodingGIFPreviewGeneratedOnlyOnce() throws {
         let data = Test.data(name: "cat", extension: "gif")
-        XCTAssertEqual(data.count, 427672) // 427 KB
+        #expect(data.count == 427672) // 427 KB
         let chunk = data[...60000] // 6 KB
-        
+
         let context = ImageDecodingContext.mock(data: chunk)
-        let decoder = try XCTUnwrap(ImageDecoders.Default(context: context))
-        
-        XCTAssertNotNil(decoder.decodePartiallyDownloadedData(chunk))
-        XCTAssertNil(decoder.decodePartiallyDownloadedData(chunk))
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        #expect(decoder.decodePartiallyDownloadedData(chunk) != nil)
+        #expect(decoder.decodePartiallyDownloadedData(chunk) == nil)
     }
-    
-    func testDecodingPNGDataNotAttached() throws {
+
+    @Test func decodingPNGDataNotAttached() throws {
         let data = Test.data(name: "fixture", extension: "png")
         let container = try ImageDecoders.Default().decode(data)
-        XCTAssertNil(container.data)
+        #expect(container.data == nil)
     }
-    
-#if os(iOS) || os(tvOS) || os(macOS) || os(visionOS)
-    func testDecodeBaselineWebP() throws {
-        if #available(OSX 11.0, iOS 14.0, watchOS 7.0, tvOS 999.0, *) {
-            let data = Test.data(name: "baseline", extension: "webp")
-            let container = try ImageDecoders.Default().decode(data)
-            XCTAssertEqual(container.image.sizeInPixels, CGSize(width: 550, height: 368))
-            XCTAssertNil(container.data)
-        }
+
+#if os(iOS) || os(macOS) || os(visionOS)
+    @Test func decodeBaselineWebP() throws {
+        let data = Test.data(name: "baseline", extension: "webp")
+        let container = try ImageDecoders.Default().decode(data)
+        #expect(container.image.sizeInPixels == CGSize(width: 550, height: 368))
+        #expect(container.data == nil)
     }
 #endif
-}
 
-class ImageTypeTests: XCTestCase {
-    // MARK: PNG
-    
-    func testDetectPNG() {
+    // MARK: - Downscaling
+
+    @Test func downscalingWhenOverLimit() throws {
         let data = Test.data(name: "fixture", extension: "png")
-        XCTAssertNil(AssetType(data[0..<1]))
-        XCTAssertNil(AssetType(data[0..<7]))
-        XCTAssertEqual(AssetType(data[0..<8]), .png)
-        XCTAssertEqual(AssetType(data), .png)
+
+        // 640×360 = 230,400 pixels × 4 = 921,600 bytes decoded.
+        // Set a limit well below that to force downscaling.
+        var context = ImageDecodingContext.mock(data: data)
+        context.maximumDecodedImageSize = 40_000 // ~10,000 pixels
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        let container = try decoder.decode(data)
+        let size = container.image.sizeInPixels
+        #expect(size.width < 640)
+        #expect(size.height < 360)
     }
-    
-    // MARK: GIF
-    
-    func testDetectGIF() {
-        let data = Test.data(name: "cat", extension: "gif")
-        XCTAssertEqual(AssetType(data), .gif)
+
+    @Test func downscalingSkippedWhenUnderLimit() throws {
+        let data = Test.data(name: "fixture", extension: "png")
+
+        // Set a limit above the decoded size (640×360×4 = 921,600 bytes)
+        var context = ImageDecodingContext.mock(data: data)
+        context.maximumDecodedImageSize = 2_000_000
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        let container = try decoder.decode(data)
+        #expect(container.image.sizeInPixels == CGSize(width: 640, height: 360))
     }
-    
-    // MARK: JPEG
-    
-    func testDetectBaselineJPEG() {
-        let data = Test.data(name: "baseline", extension: "jpeg")
-        XCTAssertNil(AssetType(data[0..<1]))
-        XCTAssertNil(AssetType(data[0..<2]))
-        XCTAssertEqual(AssetType(data[0..<3]), .jpeg)
-        XCTAssertEqual(AssetType(data), .jpeg)
+
+    @Test func downscalingDisabledWhenNil() throws {
+        let data = Test.data(name: "fixture", extension: "png")
+
+        var context = ImageDecodingContext.mock(data: data)
+        context.maximumDecodedImageSize = nil
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        let container = try decoder.decode(data)
+        #expect(container.image.sizeInPixels == CGSize(width: 640, height: 360))
     }
-    
-    func testDetectProgressiveJPEG() {
-        let data = Test.data(name: "progressive", extension: "jpeg")
-        // Not enough data
-        XCTAssertNil(AssetType(Data()))
-        XCTAssertNil(AssetType(data[0..<2]))
-        
-        // Enough to determine image format
-        XCTAssertEqual(AssetType(data[0..<3]), .jpeg)
-        XCTAssertEqual(AssetType(data[0..<33]), .jpeg)
-        
-        // Full image
-        XCTAssertEqual(AssetType(data), .jpeg)
+
+    @Test func downscalingSkippedWhenThumbnailSet() throws {
+        let data = Test.data(name: "fixture", extension: "png")
+
+        var context = ImageDecodingContext.mock(data: data)
+        context.maximumDecodedImageSize = 40_000
+        context.request = ImageRequest(url: Test.url).with {
+            $0.thumbnail = .init(
+                size: CGSize(width: 100, height: 100),
+                unit: .pixels,
+                contentMode: .aspectFit
+            )
+        }
+        let decoder = try #require(ImageDecoders.Default(context: context))
+
+        // Thumbnail options take priority — downscaling is not applied
+        let container = try decoder.decode(data)
+        let size = container.image.sizeInPixels
+        #expect(size.width <= 100)
+        #expect(size.height <= 100)
     }
-    
-    // MARK: WebP
-    
-    func testDetectBaselineWebP() {
-        let data = Test.data(name: "baseline", extension: "webp")
-        XCTAssertNil(AssetType(data[0..<1]))
-        XCTAssertNil(AssetType(data[0..<2]))
-        XCTAssertEqual(AssetType(data[0..<12]), .webp)
-        XCTAssertEqual(AssetType(data), .webp)
+
+    // MARK: - Invalid / Corrupted Data
+
+    @Test func decodeRandomDataThrows() {
+        // GIVEN - bytes that share no resemblance with any image format
+        let data = Data(repeating: 0xAB, count: 512)
+        let decoder = ImageDecoders.Default()
+
+        // WHEN / THEN - decoding must throw (not crash)
+        #expect(throws: (any Error).self) {
+            try decoder.decode(data)
+        }
+    }
+
+    @Test func decodeEmptyDataThrows() {
+        let decoder = ImageDecoders.Default()
+        #expect(throws: (any Error).self) {
+            try decoder.decode(Data())
+        }
+    }
+
+    @Test func partialDataReturnsNilForUnsupportedFormat() {
+        // GIVEN - only 2 bytes of PNG data (not enough to decode)
+        let data = Test.data(name: "fixture", extension: "png")
+        let decoder = ImageDecoders.Default()
+
+        // WHEN - attempt partial decode with too-little data
+        let preview = decoder.decodePartiallyDownloadedData(data[0..<2])
+
+        // THEN - no preview produced for this tiny slice
+        #expect(preview == nil)
     }
 }
 
-class ImagePropertiesTests: XCTestCase {
-    // MARK: JPEG
-    
-    func testDetectBaselineJPEG() {
-        let data = Test.data(name: "baseline", extension: "jpeg")
-        XCTAssertNil(ImageProperties.JPEG(data[0..<1]))
-        XCTAssertNil(ImageProperties.JPEG(data[0..<2]))
-        XCTAssertNil(ImageProperties.JPEG(data[0..<3]))
-        XCTAssertEqual(ImageProperties.JPEG(data)?.isProgressive, false)
+@Suite(.timeLimit(.minutes(2)))
+struct ImageTypeTests {
+    // MARK: PNG
+
+    @Test func detectPNG() {
+        let data = Test.data(name: "fixture", extension: "png")
+        #expect(AssetType(data[0..<1]) == nil)
+        #expect(AssetType(data[0..<7]) == nil)
+        #expect(AssetType(data[0..<8]) == .png)
+        #expect(AssetType(data) == .png)
     }
-    
-    func testDetectProgressiveJPEG() {
+
+    // MARK: GIF
+
+    @Test func detectGIF() {
+        let data = Test.data(name: "cat", extension: "gif")
+        #expect(AssetType(data) == .gif)
+    }
+
+    // MARK: JPEG
+
+    @Test func detectBaselineJPEG() {
+        let data = Test.data(name: "baseline", extension: "jpeg")
+        #expect(AssetType(data[0..<1]) == nil)
+        #expect(AssetType(data[0..<2]) == nil)
+        #expect(AssetType(data[0..<3]) == .jpeg)
+        #expect(AssetType(data) == .jpeg)
+    }
+
+    @Test func detectProgressiveJPEG() {
         let data = Test.data(name: "progressive", extension: "jpeg")
         // Not enough data
-        XCTAssertNil(ImageProperties.JPEG(Data()))
-        XCTAssertNil(ImageProperties.JPEG(data[0..<2]))
-        
+        #expect(AssetType(Data()) == nil)
+        #expect(AssetType(data[0..<2]) == nil)
+
         // Enough to determine image format
-        XCTAssertNil(ImageProperties.JPEG(data[0..<3]))
-        XCTAssertNil(ImageProperties.JPEG(data[0...30]))
-        
-        // Just before the first scan
-        XCTAssertNil(ImageProperties.JPEG(data[0...358]))
-        XCTAssertEqual(ImageProperties.JPEG(data[0...359])?.isProgressive, true)
-        
+        #expect(AssetType(data[0..<3]) == .jpeg)
+        #expect(AssetType(data[0..<33]) == .jpeg)
+
         // Full image
-        XCTAssertEqual(ImageProperties.JPEG(data[0...359])?.isProgressive, true)
+        #expect(AssetType(data) == .jpeg)
+    }
+
+    // MARK: ICO
+
+    @Test func detectICO() {
+        let data = Test.data(name: "fixture", extension: "ico")
+        #expect(AssetType(data[0..<1]) == nil)
+        #expect(AssetType(data[0..<3]) == nil)
+        #expect(AssetType(data[0..<4]) == .ico)
+        #expect(AssetType(data) == .ico)
+    }
+
+    // MARK: WebP
+
+    @Test func detectBaselineWebP() {
+        let data = Test.data(name: "baseline", extension: "webp")
+        #expect(AssetType(data[0..<1]) == nil)
+        #expect(AssetType(data[0..<2]) == nil)
+        #expect(AssetType(data[0..<12]) == .webp)
+        #expect(AssetType(data) == .webp)
+    }
+
+    // MARK: HEIC
+
+    @Test func detectHEIC() {
+        let data = Test.data(name: "img_751", extension: "heic")
+        // HEIC detection requires the ftyp box at byte offset 4 (8 bytes),
+        // so 12 bytes total are needed. Shorter slices must return nil.
+        #expect(AssetType(data[0..<1]) == nil)
+        #expect(AssetType(data[0..<11]) == nil) // one byte short of the required 12
+        // Exactly 12 bytes — enough to identify HEIC
+        #expect(AssetType(data[0..<12]) == .heic)
+        // Full data
+        #expect(AssetType(data) == .heic)
+    }
+
+    // MARK: Edge Cases
+
+    @Test func detectEmptyData() {
+        #expect(AssetType(Data()) == nil)
+    }
+
+    @Test func detectUnknownFormat() {
+        // Random bytes that don't match any known format
+        let data = Data([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07])
+        #expect(AssetType(data) == nil)
     }
 }

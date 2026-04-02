@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -41,7 +41,7 @@ extension ImagePipeline.Cache {
 
     // MARK: Cached Images
 
-    /// Returns a cached image any of the caches.
+    /// Returns a cached image from any of the caches.
     ///
     /// - note: Respects request options such as its cache policy.
     ///
@@ -75,6 +75,7 @@ extension ImagePipeline.Cache {
     /// - note: Image previews are not stored.
     ///
     /// - parameters:
+    ///   - image: The image container to store in the cache.
     ///   - request: The request. Make sure to remove the processors if you want
     ///   to retrieve an original image (if it's stored).
     ///   - caches: `[.all]`, by default.
@@ -168,7 +169,7 @@ extension ImagePipeline.Cache {
         dataCache.storeData(data, for: key)
     }
 
-    /// Returns true if the data cache contains data for the given image
+    /// Returns `true` if the data cache contains data for the given image.
     public func containsData(for request: ImageRequest) -> Bool {
         guard let dataCache = dataCache(for: request) else {
             return false
@@ -200,15 +201,15 @@ extension ImagePipeline.Cache {
         if let customKey = pipeline.delegate.cacheKey(for: request, pipeline: pipeline) {
             return customKey
         }
-        return "\(request.preferredImageId)\(request.thumbnail?.identifier ?? "")\(ImageProcessors.Composition(request.processors).identifier)"
+        return "\(request.imageID ?? "")\(request.thumbnail?.identifier ?? "")\(ImageProcessors.Composition(request.processors).identifier)"
     }
 
     // MARK: Misc
 
-    /// Removes both images and data from all cache layes.
+    /// Removes both images and data from all cache layers.
     ///
     /// - important: It clears only caches set in the pipeline configuration. If
-    /// you implement ``ImagePipelineDelegate`` that uses different caches for
+    /// you implement ``ImagePipeline/Delegate`` that uses different caches for
     /// different requests, this won't remove images from them.
     public func removeAll(caches: Caches = [.all]) {
         if caches.contains(.memory) {
@@ -252,8 +253,11 @@ extension ImagePipeline.Cache {
             self.rawValue = rawValue
         }
 
+        /// In-memory image cache (see ``ImageCaching``).
         public static let memory = Caches(rawValue: 1 << 0)
+        /// Disk data cache (see ``DataCaching``).
         public static let disk = Caches(rawValue: 1 << 1)
+        /// Both memory and disk caches.
         public static let all: Caches = [.memory, .disk]
     }
 }

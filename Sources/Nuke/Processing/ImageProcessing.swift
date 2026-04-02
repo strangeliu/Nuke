@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -10,7 +10,7 @@ import UIKit
 import AppKit
 #endif
 
-/// Performs image processing.
+/// Transforms an image as part of the pipeline processing step.
 ///
 /// For basic processing needs, implement the following method:
 ///
@@ -30,13 +30,13 @@ import AppKit
 public protocol ImageProcessing: Sendable {
     /// Returns a processed image. By default, returns `nil`.
     ///
-    /// - note: Gets called a background queue managed by the pipeline.
+    /// - note: Gets called on a background queue managed by the pipeline.
     func process(_ image: PlatformImage) -> PlatformImage?
 
     /// Optional method. Returns a processed image. By default, this calls the
     /// basic `process(image:)` method.
     ///
-    /// - note: Gets called a background queue managed by the pipeline.
+    /// - note: Gets called on a background queue managed by the pipeline.
     func process(_ container: ImageContainer, context: ImageProcessingContext) throws -> ImageContainer
 
     /// Returns a string that uniquely identifies the processor.
@@ -68,7 +68,7 @@ extension ImageProcessing {
         return container
     }
 
-    /// The default impleemntation simply returns `var identifier: String`.
+    /// The default implementation simply returns `var identifier: String`.
     public var hashableIdentifier: AnyHashable { identifier }
 }
 
@@ -76,10 +76,18 @@ extension ImageProcessing where Self: Hashable {
     public var hashableIdentifier: AnyHashable { self }
 }
 
-/// Image processing context used when selecting which processor to use.
+/// Context passed to an ``ImageProcessing`` implementation.
+///
+/// Provides access to the originating request, the current response, and
+/// whether the response is the final (fully downloaded) image or a progressive
+/// preview.
 public struct ImageProcessingContext: Sendable {
+    /// The request that initiated the image load.
     public var request: ImageRequest
+    /// The current image response being processed.
     public var response: ImageResponse
+    /// `true` when this is the final (fully downloaded) image; `false` for
+    /// progressive previews.
     public var isCompleted: Bool
 
     public init(request: ImageRequest, response: ImageResponse, isCompleted: Bool) {
@@ -89,7 +97,9 @@ public struct ImageProcessingContext: Sendable {
     }
 }
 
+/// An error thrown by an ``ImageProcessing`` implementation.
 public enum ImageProcessingError: Error, CustomStringConvertible, Sendable {
+    /// The processor failed for an unspecified reason.
     case unknown
 
     public var description: String { "Unknown" }

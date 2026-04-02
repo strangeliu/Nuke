@@ -1,14 +1,16 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
 @testable import Nuke
 
-class TaskTests: XCTestCase {
+@Suite(.timeLimit(.minutes(2))) @ImagePipelineActor
+struct TaskTests {
     // MARK: - Starter
 
-    func testStarterCalledOnFirstSubscription() {
+    @Test func starterCalledOnFirstSubscription() {
         // Given
         var startCount = 0
         _ = SimpleTask<Int, Error>(starter: { _ in
@@ -16,10 +18,10 @@ class TaskTests: XCTestCase {
         })
 
         // Then
-        XCTAssertEqual(startCount, 0)
+        #expect(startCount == 0)
     }
 
-    func testStarterCalledWhenSubscriptionIsAdded() {
+    @Test func starterCalledWhenSubscriptionIsAdded() {
         // Given
         var startCount = 0
         let task = SimpleTask<Int, Error>(starter: { _ in
@@ -30,10 +32,10 @@ class TaskTests: XCTestCase {
         _ = task.subscribe { _ in }
 
         // Then started is called
-        XCTAssertEqual(startCount, 1)
+        #expect(startCount == 1)
     }
 
-    func testStarterOnlyCalledOnce() {
+    @Test func starterOnlyCalledOnce() {
         // Given
         var startCount = 0
         let task = SimpleTask<Int, Error>(starter: { _ in
@@ -45,10 +47,10 @@ class TaskTests: XCTestCase {
         _ = task.subscribe { _ in }
 
         // Then started is only called once
-        XCTAssertEqual(startCount, 1)
+        #expect(startCount == 1)
     }
 
-    func testStarterIsDeallocated() {
+    @Test func starterIsDeallocated() {
         // Given
         class Foo {
         }
@@ -63,18 +65,18 @@ class TaskTests: XCTestCase {
             })
         }
 
-        XCTAssertNotNil(weakFoo, "Foo is retained by starter")
+        #expect(weakFoo != nil, "Foo is retained by starter")
 
         // When first subscription is added and starter is called
         _ = task.subscribe { _ in }
 
         // Then
-        XCTAssertNil(weakFoo, "Started wasn't deallocated")
+        #expect(weakFoo == nil, "Started wasn't deallocated")
     }
 
     // MARK: - Subscribe
 
-    func testWhenSubscriptionAddedEventsAreForwarded() {
+    @Test func whenSubscriptionAddedEventsAreForwarded() {
         // Given
         let task = SimpleTask<Int, MyError>(starter: {
             $0.send(progress: TaskProgress(completed: 1, total: 2))
@@ -90,7 +92,7 @@ class TaskTests: XCTestCase {
         }
 
         // Then
-        XCTAssertEqual(recordedEvents, [
+        #expect(recordedEvents == [
             .progress(TaskProgress(completed: 1, total: 2)),
             .value(1, isCompleted: false),
             .progress(TaskProgress(completed: 2, total: 2)),
@@ -98,7 +100,7 @@ class TaskTests: XCTestCase {
         ])
     }
 
-    func testBothSubscriptionsReceiveEvents() {
+    @Test func bothSubscriptionsReceiveEvents() {
         // Given
         let task = AsyncTask<Int, MyError>()
 
@@ -106,32 +108,33 @@ class TaskTests: XCTestCase {
         var eventCount = 0
 
         _ = task.subscribe { event in
-            XCTAssertEqual(event, .value(1, isCompleted: false))
+            #expect(event == .value(1, isCompleted: false))
             eventCount += 1 }
-        _ = task.subscribe {  event in
-            XCTAssertEqual(event, .value(1, isCompleted: false))
+        _ = task.subscribe { event in
+            #expect(event == .value(1, isCompleted: false))
             eventCount += 1
         }
 
         task.send(value: 1)
 
         // Then
-        XCTAssertEqual(eventCount, 2)
+        #expect(eventCount == 2)
     }
 
-    func testCantSubscribeToAlreadyCancelledTask() {
+    @Test func cantSubscribeToAlreadyCancelledTask() async {
         // Given
         let task = SimpleTask<Int, MyError>(starter: { _ in })
         let subscription = task.subscribe { _ in }
 
         // When
         subscription?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertNil(task.subscribe { _ in })
+        #expect(task.subscribe { _ in } == nil)
     }
 
-    func testCantSubscribeToAlreadySucceededTask() {
+    @Test func cantSubscribeToAlreadySucceededTask() {
         // Given
         let task = AsyncTask<Int, MyError>()
         _ = task.subscribe { _ in }
@@ -140,10 +143,10 @@ class TaskTests: XCTestCase {
         task.send(value: 1, isCompleted: true)
 
         // Then
-        XCTAssertNil(task.subscribe { _ in })
+        #expect(task.subscribe { _ in } == nil)
     }
 
-    func testCantSubscribeToAlreadyFailedTasks() {
+    @Test func cantSubscribeToAlreadyFailedTasks() {
         // Given
         let task = AsyncTask<Int, MyError>()
         _ = task.subscribe { _ in }
@@ -152,29 +155,29 @@ class TaskTests: XCTestCase {
         task.send(error: .init(raw: "1"))
 
         // Then
-        XCTAssertNil(task.subscribe { _ in })
+        #expect(task.subscribe { _ in } == nil)
     }
 
-    func testSubscribeToTaskWithSynchronousCompletionReturnsNil() {
+    @Test func subscribeToTaskWithSynchronousCompletionReturnsNil() async {
         // Given
         let task = SimpleTask<Int, MyError> { (task) in
             task.send(value: 0, isCompleted: true)
         }
 
         // When
-        let expectation = self.expectation(description: "Observer called")
-        let subscription = task.subscribe { _ in
-            expectation.fulfill()
-        }
+        await confirmation { confirm in
+            let subscription = task.subscribe { _ in
+                confirm()
+            }
 
-        // Then
-        XCTAssertNil(subscription)
-        wait()
+            // Then
+            #expect(subscription == nil)
+        }
     }
 
-    // MARK: - Ubsubscribe
+    // MARK: - Unsubscribe
 
-    func testWhenSubscriptionIsRemovedNoEventsAreSent() {
+    @Test func whenSubscriptionIsRemovedNoEventsAreSent() async {
         // Given
         let task = AsyncTask<Int, MyError>()
         var recordedEvents = [AsyncTask<Int, MyError>.Event]()
@@ -182,25 +185,27 @@ class TaskTests: XCTestCase {
 
         // When
         subscription?.unsubscribe()
+        await Task.yield()
         task.send(value: 1)
 
         // Then
-        XCTAssertTrue(recordedEvents.isEmpty, "Expect no events to be received by observer after subscription is removed")
+        #expect(recordedEvents.isEmpty, "Expect no events to be received by observer after subscription is removed")
     }
 
-    func testWhenSubscriptionIsRemovedTaskBecomesDisposed() {
+    @Test func whenSubscriptionIsRemovedTaskBecomesDisposed() async {
         // Given
         let task = AsyncTask<Int, MyError>()
         let subscription = task.subscribe { _ in }
 
         // When
         subscription?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertTrue(task.isDisposed, "Expect task to be marked as disposed")
+        #expect(task.isDisposed, "Expect task to be marked as disposed")
     }
 
-    func testWhenSubscriptionIsRemovedOnCancelIsCalled() {
+    @Test func whenSubscriptionIsRemovedOnCancelIsCalled() async {
         // Given
         let task = AsyncTask<Int, MyError>()
         let subscription = task.subscribe { _ in }
@@ -212,57 +217,62 @@ class TaskTests: XCTestCase {
 
         // When
         subscription?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertTrue(onCancelledIsCalled)
+        #expect(onCancelledIsCalled)
     }
 
-    func testWhenSubscriptionIsRemovedOperationIsCancelled() {
+    @Test func whenSubscriptionIsRemovedOperationIsCancelled() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription = task.subscribe { _ in }
-        XCTAssertFalse(operation.isCancelled)
+        #expect(!operation.isCancelled)
 
         // When
         subscription?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertTrue(operation.isCancelled)
+        #expect(operation.isCancelled)
     }
 
-    func testWhenSubscriptionIsRemovedDependencyIsCancelled() {
+    @Test func whenSubscriptionIsRemovedDependencyIsCancelled() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let dependency = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let task = SimpleTask<Int, MyError>(starter: { $0.dependency = dependency.subscribe { _ in } })
         let subscription = task.subscribe { _ in }
-        XCTAssertFalse(operation.isCancelled)
+        #expect(!operation.isCancelled)
 
         // When
-        subscription?.unsubscribe()
+        await waitForCancellation(of: operation) {
+            subscription?.unsubscribe()
+        }
 
         // Then
-        XCTAssertTrue(operation.isCancelled)
+        #expect(operation.isCancelled)
     }
 
-    func testWhenOneOfTwoSubscriptionsAreRemovedTaskNotCancelled() {
+    @Test func whenOneOfTwoSubscriptionsAreRemovedTaskNotCancelled() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription1 = task.subscribe { _ in }
         _ = task.subscribe { _ in }
 
         // When
         subscription1?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertFalse(operation.isCancelled)
+        #expect(!operation.isCancelled)
     }
 
-    func testWhenTwoOfTwoSubscriptionsAreRemovedTaskIsCancelled() {
+    @Test func whenTwoOfTwoSubscriptionsAreRemovedTaskIsCancelled() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription1 = task.subscribe { _ in }
         let subscription2 = task.subscribe { _ in }
@@ -270,56 +280,60 @@ class TaskTests: XCTestCase {
         // When
         subscription1?.unsubscribe()
         subscription2?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertTrue(operation.isCancelled)
+        #expect(operation.isCancelled)
     }
 
     // MARK: - Priority
 
-    func testWhenPriorityIsUpdatedOperationPriorityAlsoUpdated() {
+    @Test func whenPriorityIsUpdatedOperationPriorityAlsoUpdated() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription = task.subscribe { _ in }
 
         // When
         subscription?.setPriority(.high)
+        await Task.yield()
 
         // Then
-        XCTAssertEqual(operation.queuePriority, .high)
+        #expect(operation.priority == .high)
     }
 
-    func testWhenTaskChangesOperationPriorityUpdated() { // Or sets operation later
+    @Test func whenTaskChangesOperationPriorityUpdated() async {
         // Given
         let task = AsyncTask<Int, MyError>()
         let subscription = task.subscribe { _ in }
 
         // When
         subscription?.setPriority(.high)
-        let operation = Foundation.Operation()
+        await Task.yield()
+        let operation = TaskQueue.Operation()
         task.operation = operation
 
         // Then
-        XCTAssertEqual(operation.queuePriority, .high)
+        #expect(operation.priority == .high)
     }
 
-    func testThatPriorityCanBeLowered() {
+    @Test func thatPriorityCanBeLowered() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription = task.subscribe { _ in }
 
         // When
         subscription?.setPriority(.low)
+        await Task.yield()
 
         // Then
-        XCTAssertEqual(operation.queuePriority, .low)
+        #expect(operation.priority == .low)
     }
 
-    func testThatPriorityEqualMaximumPriorityOfAllSubscriptions() {
+    @Test func thatPriorityEqualMaximumPriorityOfAllSubscriptions() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription1 = task.subscribe { _ in }
         let subscription2 = task.subscribe { _ in }
@@ -327,31 +341,34 @@ class TaskTests: XCTestCase {
         // When
         subscription1?.setPriority(.low)
         subscription2?.setPriority(.high)
+        await Task.yield()
 
         // Then
-        XCTAssertEqual(operation.queuePriority, .high)
+        #expect(operation.priority == .high)
     }
 
-    func testWhenSubscriptionIsRemovedPriorityIsUpdated() {
+    @Test func whenSubscriptionIsRemovedPriorityIsUpdated() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription1 = task.subscribe { _ in }
         let subscription2 = task.subscribe { _ in }
 
         subscription1?.setPriority(.low)
         subscription2?.setPriority(.high)
+        await Task.yield()
 
         // When
         subscription2?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertEqual(operation.queuePriority, .low)
+        #expect(operation.priority == .low)
     }
 
-    func testWhenSubscriptionLowersPriorityButExistingSubscriptionHasHigherPriporty() {
+    @Test func whenSubscriptionLowersPriorityButExistingSubscriptionHasHigherPriority() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let task = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let subscription1 = task.subscribe { _ in }
         let subscription2 = task.subscribe { _ in }
@@ -359,28 +376,31 @@ class TaskTests: XCTestCase {
         // When
         subscription2?.setPriority(.high)
         subscription1?.setPriority(.low)
+        await Task.yield()
 
         // Then order of updating sub
-        XCTAssertEqual(operation.queuePriority, .high)
+        #expect(operation.priority == .high)
     }
 
-    func testPriorityOfDependencyUpdated() {
+    @Test func priorityOfDependencyUpdated() async {
         // Given
-        let operation = Foundation.Operation()
+        let operation = TaskQueue.Operation()
         let dependency = SimpleTask<Int, MyError>(starter: { $0.operation = operation })
         let task = SimpleTask<Int, MyError>(starter: { $0.dependency = dependency.subscribe { _ in } })
         let subscription = task.subscribe { _ in }
 
         // When
-        subscription?.setPriority(.high)
+        await waitForPriorityChange(of: operation, to: .high) {
+            subscription?.setPriority(.high)
+        }
 
         // Then
-        XCTAssertEqual(operation.queuePriority, .high)
+        #expect(operation.priority == .high)
     }
 
     // MARK: - Dispose
 
-    func testExecutingTaskIsntDisposed() {
+    @Test func executingTaskIsntDisposed() {
         // Given
         let task = AsyncTask<Int, MyError>()
         var isDisposeCalled = false
@@ -391,11 +411,11 @@ class TaskTests: XCTestCase {
         task.send(value: 1) // Casually sending value
 
         // Then
-        XCTAssertFalse(isDisposeCalled)
-        XCTAssertFalse(task.isDisposed)
+        #expect(!isDisposeCalled)
+        #expect(!task.isDisposed)
     }
 
-    func testThatTaskIsDisposedWhenCancelled() {
+    @Test func thatTaskIsDisposedWhenCancelled() async {
         // Given
         let task = SimpleTask<Int, MyError>(starter: { _ in })
         var isDisposeCalled = false
@@ -404,13 +424,14 @@ class TaskTests: XCTestCase {
 
         // When
         subscription?.unsubscribe()
+        await Task.yield()
 
         // Then
-        XCTAssertTrue(isDisposeCalled)
-        XCTAssertTrue(task.isDisposed)
+        #expect(isDisposeCalled)
+        #expect(task.isDisposed)
     }
 
-    func testThatTaskIsDisposedWhenCompletedWithSuccess() {
+    @Test func thatTaskIsDisposedWhenCompletedWithSuccess() {
         // Given
         let task = AsyncTask<Int, MyError>()
         var isDisposeCalled = false
@@ -421,11 +442,11 @@ class TaskTests: XCTestCase {
         task.send(value: 1, isCompleted: true)
 
         // Then
-        XCTAssertTrue(isDisposeCalled)
-        XCTAssertTrue(task.isDisposed)
+        #expect(isDisposeCalled)
+        #expect(task.isDisposed)
     }
 
-    func testThatTaskIsDisposedWhenCompletedWithFailure() {
+    @Test func thatTaskIsDisposedWhenCompletedWithFailure() {
         // Given
         let task = AsyncTask<Int, MyError>()
         var isDisposeCalled = false
@@ -436,8 +457,8 @@ class TaskTests: XCTestCase {
         task.send(error: .init(raw: "1"))
 
         // Then
-        XCTAssertTrue(isDisposeCalled)
-        XCTAssertTrue(task.isDisposed)
+        #expect(isDisposeCalled)
+        #expect(task.isDisposed)
     }
 }
 
@@ -447,6 +468,7 @@ private struct MyError: Equatable {
     let raw: String
 }
 
+@ImagePipelineActor
 private final class SimpleTask<T, E>: AsyncTask<T, E>, @unchecked Sendable {
     private var starter: ((SimpleTask) -> Void)?
 
@@ -464,6 +486,7 @@ private final class SimpleTask<T, E>: AsyncTask<T, E>, @unchecked Sendable {
     }
 }
 
+@ImagePipelineActor
 extension AsyncTask {
     func subscribe(priority: TaskPriority = .normal, _ observer: @escaping (Event) -> Void) -> TaskSubscription? {
         publisher.subscribe(priority: priority, subscriber: "" as AnyObject, observer)

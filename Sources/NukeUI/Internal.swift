@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 import Nuke
@@ -112,14 +112,5 @@ func == (lhs: [any ImageProcessing], rhs: [any ImageProcessing]) -> Bool {
     // identifiers might be expensive to compute.
     return zip(lhs, rhs).allSatisfy {
         $0.hashableIdentifier == $1.hashableIdentifier
-    }
-}
-
-extension ImageRequest {
-    var preferredImageId: String {
-        if !userInfo.isEmpty, let imageId = userInfo[.imageIdKey] as? String {
-            return imageId
-        }
-        return imageId ?? ""
     }
 }

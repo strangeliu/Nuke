@@ -1,13 +1,13 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
 extension ImagePipeline {
     /// Represents all possible image pipeline errors.
     public enum Error: Swift.Error, CustomStringConvertible, @unchecked Sendable {
-        /// Returned if data not cached and ``ImageRequest/Options-swift.struct/returnCacheDataDontLoad`` option is specified.
+        /// Returned if data is not cached and ``ImageRequest/Options-swift.struct/returnCacheDataDontLoad`` option is specified.
         case dataMissingInCache
         /// Data loader failed to load image data with a wrapped error.
         case dataLoadingFailed(error: Swift.Error)
@@ -22,10 +22,14 @@ extension ImagePipeline {
         case decodingFailed(decoder: any ImageDecoding, context: ImageDecodingContext, error: Swift.Error)
         /// Processor failed to produce a final image.
         case processingFailed(processor: any ImageProcessing, context: ImageProcessingContext, error: Swift.Error)
-        /// Load image method was called with no image request.
+        /// Load image method was called with no image request or no URL.
         case imageRequestMissing
         /// Image pipeline is invalidated and no requests can be made.
         case pipelineInvalidated
+        /// The downloaded data exceeded ``ImagePipeline/Configuration/maximumResponseDataSize``.
+        case dataDownloadExceededMaximumSize
+        /// The image task was cancelled.
+        case cancelled
     }
 }
 
@@ -60,6 +64,10 @@ extension ImagePipeline.Error {
             return "Load image method was called with no image request or no URL."
         case .pipelineInvalidated:
             return "Image pipeline is invalidated and no requests can be made."
+        case .dataDownloadExceededMaximumSize:
+            return "The downloaded data exceeded the maximum allowed size."
+        case .cancelled:
+            return "The image task was cancelled."
         }
     }
 }

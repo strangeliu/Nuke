@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -26,6 +26,18 @@ final class LinkedList<Element> {
         let node = Node(value: element)
         append(node)
         return node
+    }
+
+    /// Adds a node to the beginning of the list.
+    func prepend(_ node: Node) {
+        if let first {
+            first.previous = node
+            node.next = first
+            self.first = node
+        } else {
+            first = node
+            last = node
+        }
     }
 
     /// Adds a node to the end of the list.

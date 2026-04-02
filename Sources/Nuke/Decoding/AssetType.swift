@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -16,26 +16,36 @@ public struct AssetType: ExpressibleByStringLiteral, Hashable, Sendable {
         self.rawValue = value
     }
 
+    /// PNG (Portable Network Graphics).
     public static let png: AssetType = "public.png"
+
+    /// JPEG.
     public static let jpeg: AssetType = "public.jpeg"
+
+    /// GIF (Graphics Interchange Format).
     public static let gif: AssetType = "com.compuserve.gif"
+
     /// HEIF (High Efficiency Image Format) by Apple.
     public static let heic: AssetType = "public.heic"
 
-    /// WebP
+    /// WebP.
     ///
     /// Native decoding support only available on the following platforms: macOS 11,
     /// iOS 14, watchOS 7, tvOS 14.
     public static let webp: AssetType = "public.webp"
 
+    /// MPEG-4 video.
     public static let mp4: AssetType = "public.mpeg4"
 
-    /// The M4V file format is a video container format developed by Apple and
-    /// is very similar to the MP4 format. The primary difference is that M4V
-    /// files may optionally be protected by DRM copy protection.
+    /// M4V video container developed by Apple, similar to MP4. May optionally
+    /// be protected by DRM copy protection.
     public static let m4v: AssetType = "public.m4v"
 
+    /// QuickTime movie.
     public static let mov: AssetType = "public.mov"
+
+    /// ICO (Windows icon format).
+    public static let ico: AssetType = "com.microsoft.ico"
 }
 
 extension AssetType {
@@ -49,13 +59,15 @@ extension AssetType {
 
     private static func make(_ data: Data) -> AssetType? {
         func _match(_ numbers: [UInt8?], offset: Int = 0) -> Bool {
-            guard data.count >= numbers.count else {
+            guard data.count >= numbers.count + offset else {
                 return false
             }
             return zip(numbers.indices, numbers).allSatisfy { index, number in
                 guard let number else { return true }
-                guard (index + offset) < data.count else { return false }
-                return data[index + offset] == number
+                guard let index = data.index(data.startIndex, offsetBy: index + offset, limitedBy: data.endIndex) else {
+                    return false
+                }
+                return data[index] == number
             }
         }
 
@@ -71,6 +83,8 @@ extension AssetType {
         // WebP magic numbers https://en.wikipedia.org/wiki/List_of_file_signatures
         if _match([0x52, 0x49, 0x46, 0x46, nil, nil, nil, nil, 0x57, 0x45, 0x42, 0x50]) { return .webp }
 
+        if _match([0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63], offset: 4) { return .heic }
+
         // see https://stackoverflow.com/questions/21879981/avfoundation-avplayer-supported-formats-no-vob-or-mpg-containers
         // https://en.wikipedia.org/wiki/List_of_file_signatures
         if _match([0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D], offset: 4) { return .mp4 }
@@ -82,6 +96,9 @@ extension AssetType {
 
         // MOV magic numbers https://www.garykessler.net/library/file_sigs.html
         if _match([0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20], offset: 4) { return .mov }
+
+        // ICO magic numbers https://en.wikipedia.org/wiki/ICO_(file_format)
+        if _match([0x00, 0x00, 0x01, 0x00]) { return .ico }
 
         // Either not enough data, or we just don't support this format.
         return nil

@@ -1,79 +1,132 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
-import XCTest
+import Testing
+import Foundation
 @testable import Nuke
 
-class ImagePipelineTaskDelegateTests: XCTestCase {
-    private var dataLoader: MockDataLoader!
-    private var pipeline: ImagePipeline!
-    private var delegate: ImagePipelineObserver!
+@Suite(.timeLimit(.minutes(2)))
+struct ImagePipelineTaskDelegateTests {
+    private let dataLoader: MockDataLoader
+    private let pipeline: ImagePipeline
+    private let delegate: ImagePipelineObserver
 
-    override func setUp() {
-        super.setUp()
-
-        dataLoader = MockDataLoader()
-        delegate = ImagePipelineObserver()
-
-        pipeline = ImagePipeline(delegate: delegate) {
+    init() {
+        let dataLoader = MockDataLoader()
+        let delegate = ImagePipelineObserver()
+        self.dataLoader = dataLoader
+        self.delegate = delegate
+        self.pipeline = ImagePipeline(delegate: delegate) {
             $0.dataLoader = dataLoader
             $0.imageCache = nil
         }
     }
 
-    func testStartAndCompletedEvents() throws {
-        var result: Result<ImageResponse, ImagePipeline.Error>?
-        expect(pipeline).toLoadImage(with: Test.request) { result = $0 }
-        wait()
+    @Test func startAndCompletedEvents() async throws {
+        let completed = TestExpectation(notification: ImagePipelineObserver.didCompleteTask, object: delegate)
+        let response = try await pipeline.imageTask(with: Test.request).response
+        await completed.wait()
 
         // Then
-        XCTAssertEqual(delegate.events, [
+        #expect(delegate.events == [
             ImageTaskEvent.created,
             .started,
             .progressUpdated(completedUnitCount: 22789, totalUnitCount: 22789),
-            .completed(result: try XCTUnwrap(result))
+            .completed(result: .success(response))
         ])
     }
 
-    func testProgressUpdateEvents() throws {
+    @Test func progressUpdateEvents() async throws {
         let request = ImageRequest(url: Test.url)
         dataLoader.results[Test.url] = .success(
             (Data(count: 20), URLResponse(url: Test.url, mimeType: "jpeg", expectedContentLength: 20, textEncodingName: nil))
         )
 
+        let completed = TestExpectation(notification: ImagePipelineObserver.didCompleteTask, object: delegate)
         var result: Result<ImageResponse, ImagePipeline.Error>?
-        expect(pipeline).toFailRequest(request) { result = $0 }
-        wait()
+        do {
+            let response = try await pipeline.imageTask(with: request).response
+            result = .success(response)
+        } catch {
+            result = .failure(error)
+        }
+        await completed.wait()
 
         // Then
-        XCTAssertEqual(delegate.events, [
+        #expect(delegate.events == [
             ImageTaskEvent.created,
             .started,
             .progressUpdated(completedUnitCount: 10, totalUnitCount: 20),
             .progressUpdated(completedUnitCount: 20, totalUnitCount: 20),
-            .completed(result: try XCTUnwrap(result))
+            .completed(result: try #require(result))
         ])
     }
 
-    func testCancellationEvents() {
+    @Test func cancellationEvents() async {
         dataLoader.queue.isSuspended = true
 
-        expectNotification(MockDataLoader.DidStartTask, object: dataLoader)
-        let task = pipeline.loadImage(with: Test.request) { _ in
-            XCTFail()
-        }
-        wait() // Wait till operation is created
+        let startExpectation = TestExpectation(notification: MockDataLoader.DidStartTask, object: dataLoader)
+        let task = pipeline.imageTask(with: Test.request)
+        Task.detached { try? await task.response }
+        await startExpectation.wait()
 
-        expectNotification(ImagePipelineObserver.didCancelTask, object: delegate)
-        task.cancel()
-        wait()
+        await notification(ImagePipelineObserver.didCancelTask, object: delegate) {
+            task.cancel()
+        }
+        await Task.yield()
 
         // Then
-        XCTAssertEqual(delegate.events, [
+        #expect(delegate.events == [
             ImageTaskEvent.created,
             .started,
             .cancelled
         ])
+    }
+
+    @Test func errorCompletionEventDelivered() async throws {
+        // GIVEN a data loader that fails
+        let error = URLError(.notConnectedToInternet)
+        dataLoader.results[Test.url] = .failure(error as NSError)
+
+        // WHEN
+        let completed = TestExpectation(notification: ImagePipelineObserver.didCompleteTask, object: delegate)
+        _ = try? await pipeline.imageTask(with: Test.request).response
+        await completed.wait()
+
+        // THEN the delegate receives a completed(.failure(...)) event
+        let events = delegate.events
+        guard case .completed(let result) = events.last else {
+            Issue.record("Expected completed event, got \(events)")
+            return
+        }
+        if case .success = result {
+            Issue.record("Expected failure result")
+        }
+    }
+
+    @Test func intermediateResponseEventsDelivered() async throws {
+        // GIVEN a pipeline with progressive decoding
+        let dataLoader = MockProgressiveDataLoader()
+        let pipeline = ImagePipeline(delegate: delegate) {
+            $0.dataLoader = dataLoader
+            $0.isProgressiveDecodingEnabled = true
+            $0.progressiveDecodingInterval = 0
+            $0.imageCache = nil
+        }
+
+        // WHEN
+        let task = pipeline.imageTask(with: Test.url)
+        for try await _ in task.previews {
+            dataLoader.resume()
+        }
+        _ = try await task.response
+
+        // THEN intermediate response events are recorded
+        let previews = delegate.events.filter {
+            if case .intermediateResponseReceived = $0 { return true }
+            return false
+        }
+        #expect(previews.count >= 1)
     }
 }

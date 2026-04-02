@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 
@@ -13,9 +13,8 @@ import Foundation
 /// The task has built-in support for operations (`Foundation.Operation`) – it
 /// automatically cancels them, updates the priority, etc. Most steps in the
 /// image pipeline are represented using Operation to take advantage of these features.
-///
-/// - warning: Must be thread-confined!
-class AsyncTask<Value: Sendable, Error: Sendable>: AsyncTaskSubscriptionDelegate, @unchecked Sendable {
+@ImagePipelineActor
+class AsyncTask<Value: Sendable, Error: Sendable>: AsyncTaskSubscriptionDelegate {
 
     private struct Subscription {
         let closure: (Event) -> Void
@@ -41,14 +40,14 @@ class AsyncTask<Value: Sendable, Error: Sendable>: AsyncTaskSubscriptionDelegate
     private var isStarted = false
 
     /// Gets called when the task is either cancelled, or was completed.
-    var onDisposed: (() -> Void)?
+    var onDisposed: (@ImagePipelineActor @Sendable() -> Void)?
 
-    var onCancelled: (() -> Void)?
+    var onCancelled: (@ImagePipelineActor @Sendable () -> Void)?
 
     var priority: TaskPriority = .normal {
         didSet {
             guard oldValue != priority else { return }
-            operation?.queuePriority = priority.queuePriority
+            operation?.priority = priority
             dependency?.setPriority(priority)
         }
     }
@@ -63,10 +62,10 @@ class AsyncTask<Value: Sendable, Error: Sendable>: AsyncTaskSubscriptionDelegate
         }
     }
 
-    weak var operation: Foundation.Operation? {
+    var operation: TaskQueue.Operation? {
         didSet {
             guard priority != .normal else { return }
-            operation?.queuePriority = priority.queuePriority
+            operation?.priority = priority
         }
     }
 
@@ -78,7 +77,7 @@ class AsyncTask<Value: Sendable, Error: Sendable>: AsyncTaskSubscriptionDelegate
 
     // MARK: - Managing Observers
 
-    /// - notes: Returns `nil` if the task was disposed.
+    /// - note: Returns `nil` if the task was disposed.
     private func subscribe(priority: TaskPriority = .normal, subscriber: AnyObject, _ closure: @escaping (Event) -> Void) -> TaskSubscription? {
         guard !isDisposed else { return nil }
 
@@ -218,20 +217,20 @@ class AsyncTask<Value: Sendable, Error: Sendable>: AsyncTaskSubscriptionDelegate
 
 extension AsyncTask {
     /// Publishes the results of the task.
-    struct Publisher {
+    @ImagePipelineActor struct Publisher {
         fileprivate let task: AsyncTask
 
         /// Attaches the subscriber to the task.
-        /// - notes: Returns `nil` if the task is already disposed.
+        /// - note: Returns `nil` if the task is already disposed.
         func subscribe(priority: TaskPriority = .normal, subscriber: AnyObject, _ closure: @escaping (Event) -> Void) -> TaskSubscription? {
             task.subscribe(priority: priority, subscriber: subscriber, closure)
         }
 
         /// Attaches the subscriber to the task. Automatically forwards progress
         /// and error events to the given task.
-        /// - notes: Returns `nil` if the task is already disposed.
+        /// - note: Returns `nil` if the task is already disposed.
         func subscribe<NewValue>(_ task: AsyncTask<NewValue, Error>, onValue: @escaping (Value, Bool) -> Void) -> TaskSubscription? {
-            subscribe(subscriber: task) { [weak task] event in
+            subscribe(priority: task.priority, subscriber: task) { [weak task] event in
                 guard let task else { return }
                 switch event {
                 case let .value(value, isCompleted):
@@ -248,18 +247,8 @@ extension AsyncTask {
 
 typealias TaskProgress = ImageTask.Progress // Using typealias for simplicity
 
-enum TaskPriority: Int, Comparable {
+enum TaskPriority: Int, Comparable, CaseIterable {
     case veryLow = 0, low, normal, high, veryHigh
-
-    var queuePriority: Operation.QueuePriority {
-        switch self {
-        case .veryLow: return .veryLow
-        case .low: return .low
-        case .normal: return .normal
-        case .high: return .high
-        case .veryHigh: return .veryHigh
-        }
-    }
 
     static func < (lhs: TaskPriority, rhs: TaskPriority) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -281,6 +270,7 @@ extension AsyncTask.Event: Equatable where Value: Equatable, Error: Equatable {}
 
 /// Represents a subscription to a task. The observer must retain a strong
 /// reference to a subscription.
+@ImagePipelineActor
 struct TaskSubscription: Sendable {
     private let task: any AsyncTaskSubscriptionDelegate
     private let key: TaskSubscriptionKey
@@ -311,6 +301,7 @@ struct TaskSubscription: Sendable {
     }
 }
 
+@ImagePipelineActor
 private protocol AsyncTaskSubscriptionDelegate: AnyObject, Sendable {
     func unsubsribe(key: TaskSubscriptionKey)
     func setPriority(_ priority: TaskPriority, for observer: TaskSubscriptionKey)
@@ -321,11 +312,12 @@ private typealias TaskSubscriptionKey = Int
 // MARK: - TaskPool
 
 /// Contains the tasks which haven't completed yet.
+@ImagePipelineActor
 final class TaskPool<Key: Hashable, Value: Sendable, Error: Sendable> {
     private let isCoalescingEnabled: Bool
     private var map = [Key: AsyncTask<Value, Error>]()
 
-    init(_ isCoalescingEnabled: Bool) {
+    nonisolated init(_ isCoalescingEnabled: Bool) {
         self.isCoalescingEnabled = isCoalescingEnabled
     }
 

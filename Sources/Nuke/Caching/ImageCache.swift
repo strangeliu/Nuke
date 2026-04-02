@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 #if !os(macOS)
@@ -54,24 +54,25 @@ public final class ImageCache: ImageCaching {
     /// The total cost of items in the cache.
     public var totalCost: Int { impl.totalCost }
 
-    /// Shared `Cache` instance.
+    /// The shared ``ImageCache`` instance.
     public static let shared = ImageCache()
 
-    /// Initializes `Cache`.
-    /// - parameter costLimit: Default value represents a number of bytes and is
-    /// calculated based on the amount of the physical memory available on the device.
+    /// Initializes an ``ImageCache`` instance.
+    /// - parameter costLimit: The cost limit in bytes. Defaults to a value
+    /// calculated based on the amount of physical memory available on the device.
     /// - parameter countLimit: `Int.max` by default.
-    public init(costLimit: Int = ImageCache.defaultCostLimit(), countLimit: Int = Int.max) {
+    public init(costLimit: Int = ImageCache.defaultCostLimit, countLimit: Int = Int.max) {
         impl = Cache(costLimit: costLimit, countLimit: countLimit)
     }
 
     /// Returns a cost limit computed based on the amount of the physical memory
-    /// available on the device. The limit is capped at 512 MB.
-    public static func defaultCostLimit() -> Int {
-        let physicalMemory = ProcessInfo.processInfo.physicalMemory
-        let ratio = physicalMemory <= (536_870_912 /* 512 Mb */) ? 0.1 : 0.2
-        let limit = min(536_870_912, physicalMemory / UInt64(1 / ratio))
-        return Int(limit)
+    /// available on the device. The limit is set to 15% of the device's physical
+    /// memory, capped at 768 MB. The cache uses a custom LRU eviction policy that
+    /// enforces this limit precisely, unlike `NSCache` which treats cost limits
+    /// as hints.
+    public static var defaultCostLimit: Int {
+        let calculated = Int(Double(ProcessInfo.processInfo.physicalMemory) * 0.15)
+        return min(calculated, 805_306_368) // 768 MB
     }
 
     public subscript(key: ImageCacheKey) -> ImageContainer? {
@@ -89,6 +90,7 @@ public final class ImageCache: ImageCaching {
     public func removeAll() {
         impl.removeAllCachedValues()
     }
+
     /// Removes least recently used items from the cache until the total cost
     /// of the remaining items is less than the given cost limit.
     public func trim(toCost limit: Int) {

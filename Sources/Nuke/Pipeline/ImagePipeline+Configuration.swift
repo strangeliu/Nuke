@@ -1,12 +1,13 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
+import ImageIO
 
 extension ImagePipeline {
     /// The pipeline configuration.
-    public struct Configuration: @unchecked Sendable {
+    public struct Configuration: Sendable {
         // MARK: - Dependencies
 
         /// Data loader used by the pipeline.
@@ -62,17 +63,16 @@ extension ImagePipeline {
         var _isDecompressionEnabled = true
 #endif
 
-        /// If you use an aggressive disk cache ``DataCaching``, you can specify
-        /// a cache policy with multiple available options and
-        /// ``ImagePipeline/DataCachePolicy/storeOriginalData`` used by default.
+        /// Determines what images are stored in the disk cache (``DataCaching``).
+        /// ``ImagePipeline/DataCachePolicy/storeOriginalData`` by default.
         public var dataCachePolicy = ImagePipeline.DataCachePolicy.storeOriginalData
 
-        /// `true` by default. If `true` the pipeline avoids duplicated work when
-        /// loading images. The work only gets cancelled when all the registered
-        /// requests are. The pipeline also automatically manages the priority of the
-        /// deduplicated work.
+        /// Enables task coalescing. When enabled, the pipeline avoids duplicated
+        /// work when loading images. A task is only cancelled when all requests
+        /// associated with it are cancelled. The pipeline also automatically
+        /// manages the priority of the deduplicated work. `true` by default.
         ///
-        /// Let's take these two requests for example:
+        /// For example, given these two requests:
         ///
         /// ```swift
         /// let url = URL(string: "http://example.com/image")
@@ -85,27 +85,30 @@ extension ImagePipeline {
         /// ]))
         /// ```
         ///
-        /// Nuke will load the image data only once, resize the image once and
-        /// apply the blur also only once. There is no duplicated work done at
-        /// any stage.
+        /// Nuke loads the image data once, resizes once, and applies the blur
+        /// once — no duplicated work at any stage.
         public var isTaskCoalescingEnabled = true
 
-        /// `true` by default. If `true` the pipeline will rate limit requests
-        /// to prevent trashing of the underlying systems (e.g. `URLSession`).
-        /// The rate limiter only comes into play when the requests are started
-        /// and cancelled at a high rate (e.g. scrolling through a collection view).
+        /// Enables the rate limiter. When enabled, the pipeline throttles requests
+        /// to prevent thrashing the underlying systems (e.g. `URLSession`). The
+        /// rate limiter only activates when requests are started and cancelled at
+        /// a high rate, such as during fast scrolling. `true` by default.
         public var isRateLimiterEnabled = true
 
-        /// `false` by default. If `true` the pipeline will try to produce a new
-        /// image each time it receives a new portion of data from data loader.
-        /// The decoder used by the image loading session determines whether
-        /// to produce a partial image or not. The default image decoder
-        /// ``ImageDecoders/Default`` supports progressive JPEG decoding.
+        /// Enables progressive decoding. When enabled, the pipeline produces a
+        /// new image preview each time it receives a new chunk of data. Whether
+        /// a preview is produced depends on the decoder — ``ImageDecoders/Default``
+        /// supports progressive JPEG. `false` by default.
         public var isProgressiveDecodingEnabled = false
 
-        /// `true` by default. If `true`, the pipeline will store all of the
-        /// progressively generated previews in the memory cache. All of the
-        /// previews have ``ImageContainer/isPreview`` flag set to `true`.
+        /// The minimum interval between progressive decoding attempts, in
+        /// seconds. When data arrives faster than this interval, intermediate
+        /// chunks are skipped. `0.5` by default.
+        public var progressiveDecodingInterval: TimeInterval = 0.5
+
+        /// Stores progressively generated previews in the memory cache. All
+        /// previews have ``ImageContainer/isPreview`` set to `true`. `true` by
+        /// default.
         public var isStoringPreviewsInMemoryCache = true
 
         /// If the data task is terminated (either because of a failure or a
@@ -118,54 +121,61 @@ extension ImagePipeline {
         /// `data` schemes) inline without using the data loader. By default, `true`.
         public var isLocalResourcesSupportEnabled = true
 
-        /// A queue on which all callbacks, like `progress` and `completion`
-        /// callbacks are called. `.main` by default.
-        @available(*, deprecated, message: "`ImagePipeline` no longer supports changing the callback queue")
-        public var callbackQueue: DispatchQueue {
-            get { _callbackQueue }
-            set { _callbackQueue = newValue }
-        }
+        /// The maximum decoded image size in bytes allowed before automatic
+        /// downscaling. Images whose decoded bitmap would exceed this limit are
+        /// decoded at a reduced resolution. `nil` disables the check. The
+        /// default value is calculated based on the device's physical memory.
+        public var maximumDecodedImageSize: Int? = {
+            let physicalMemory = ProcessInfo.processInfo.physicalMemory
+            let ratio = physicalMemory <= (536_870_912 /* 512 MB */) ? 0.02 : 0.04
+            let limit = min(67_108_864 /* 64 MB */, physicalMemory / UInt64(1 / ratio))
+            return Int(limit)
+        }()
 
-        var _callbackQueue = DispatchQueue.main
+        /// The maximum response data size in bytes allowed before the download
+        /// is automatically cancelled. Downloads that exceed this limit fail
+        /// with ``ImagePipeline/Error/dataDownloadExceededMaximumSize``. `nil`
+        /// disables the check. The default value is 10% of physical memory,
+        /// capped at 200 MB.
+        public var maximumResponseDataSize: Int? = {
+            let physicalMemory = ProcessInfo.processInfo.physicalMemory
+            let limit = min(209_715_200 /* 200 MB */, physicalMemory / 10)
+            return Int(limit)
+        }()
 
         // MARK: - Options (Shared)
 
-        /// `false` by default. If `true`, enables `os_signpost` logging for
-        /// measuring performance. You can visually see all the performance
-        /// metrics in `os_signpost` Instrument. For more information see
-        /// https://developer.apple.com/documentation/os/logging and
-        /// https://developer.apple.com/videos/play/wwdc2018/405/.
+        /// Enables `os_signpost` logging for measuring performance. When enabled,
+        /// all performance metrics are visible in the Instruments app. `false`
+        /// by default.
+        ///
+        /// For more information, see the [Logging](https://developer.apple.com/documentation/os/logging)
+        /// documentation and [WWDC 2018 Session 405](https://developer.apple.com/videos/play/wwdc2018/405/).
         public static var isSignpostLoggingEnabled: Bool {
             get { _isSignpostLoggingEnabled.value }
             set { _isSignpostLoggingEnabled.value = newValue }
         }
 
-        private static let _isSignpostLoggingEnabled = Atomic(value: false)
+        private static let _isSignpostLoggingEnabled = Mutex(value: false)
 
         private var isCustomImageCacheProvided = false
 
-        var debugIsSyncImageEncoding = false
-
-        // MARK: - Operation Queues
+        // MARK: - Task Queues
 
         /// Data loading queue. Default maximum concurrent task count is 6.
-        public var dataLoadingQueue = OperationQueue(maxConcurrentCount: 6)
-
-        // Deprecated in Nuke 12.6
-        @available(*, deprecated, message: "The pipeline now performs cache lookup on the internal queue, reducing the amount of context switching")
-        public var dataCachingQueue = OperationQueue(maxConcurrentCount: 2)
+        public var dataLoadingQueue = TaskQueue(maxConcurrentOperationCount: 6)
 
         /// Image decoding queue. Default maximum concurrent task count is 1.
-        public var imageDecodingQueue = OperationQueue(maxConcurrentCount: 1)
+        public var imageDecodingQueue = TaskQueue(maxConcurrentOperationCount: 1)
 
         /// Image encoding queue. Default maximum concurrent task count is 1.
-        public var imageEncodingQueue = OperationQueue(maxConcurrentCount: 1)
+        public var imageEncodingQueue = TaskQueue(maxConcurrentOperationCount: 1)
 
         /// Image processing queue. Default maximum concurrent task count is 2.
-        public var imageProcessingQueue = OperationQueue(maxConcurrentCount: 2)
+        public var imageProcessingQueue = TaskQueue(maxConcurrentOperationCount: 2)
 
         /// Image decompressing queue. Default maximum concurrent task count is 2.
-        public var imageDecompressingQueue = OperationQueue(maxConcurrentCount: 2)
+        public var imageDecompressingQueue = TaskQueue(maxConcurrentOperationCount: 2)
 
         // MARK: - Initializer
 
@@ -182,14 +192,14 @@ extension ImagePipeline {
         /// of 150 MB. This is a default configuration.
         ///
         /// Also uses ``ImageCache/shared`` for in-memory caching with the size
-        /// that adjusts bsed on the amount of device memory.
+        /// that adjusts based on the amount of device memory.
         public static var withURLCache: Configuration { Configuration() }
 
         /// A configuration with an aggressive disk cache (``DataCache``) with a
         /// size limit of 150 MB. An HTTP cache (`URLCache`) is disabled.
         ///
         /// Also uses ``ImageCache/shared`` for in-memory caching with the size
-        /// that adjusts bsed on the amount of device memory.
+        /// that adjusts based on the amount of device memory.
         public static var withDataCache: Configuration {
             withDataCache()
         }
@@ -198,7 +208,7 @@ extension ImagePipeline {
         /// size limit of 150 MB by default. An HTTP cache (`URLCache`) is disabled.
         ///
         /// Also uses ``ImageCache/shared`` for in-memory caching with the size
-        /// that adjusts bsed on the amount of device memory.
+        /// that adjusts based on the amount of device memory.
         ///
         /// - parameters:
         ///   - name: Data cache name.
@@ -227,14 +237,14 @@ extension ImagePipeline {
     }
 
     /// Determines what images are stored in the disk cache.
-    public enum DataCachePolicy: Sendable {
+    @frozen public enum DataCachePolicy: Sendable {
         /// Store original image data for requests with no processors. Store
         /// _only_ processed images for requests with processors.
         ///
         /// - note: Store only processed images for local resources (file:// or
         /// data:// URL scheme).
         ///
-        /// - important: With this policy, the pipeline's ``ImagePipeline/loadData(with:completion:)-6cwk3``
+        /// - important: With this policy, the pipeline's ``ImagePipeline/loadData(with:completion:)``
         /// method will not store the images in the disk cache for requests with
         /// any processors applied – this method only loads data and doesn't
         /// decode images.
@@ -252,7 +262,7 @@ extension ImagePipeline {
         /// different than provided by a server, e.g. decompressed. In other
         /// scenarios, consider using ``automatic`` policy instead.
         ///
-        /// - important: With this policy, the pipeline's ``ImagePipeline/loadData(with:completion:)-6cwk3``
+        /// - important: With this policy, the pipeline's ``ImagePipeline/loadData(with:completion:)``
         /// method will not store the images in the disk cache – this method only
         /// loads data and doesn't decode images.
         case storeEncodedImages
@@ -262,5 +272,39 @@ extension ImagePipeline {
         /// - note: If the resource is local (has file:// or data:// scheme),
         /// only the processed images are stored.
         case storeAll
+    }
+
+    /// Determines how progressive (partial) image previews are generated during
+    /// downloads.
+    @frozen public enum PreviewPolicy: Sendable, Equatable {
+        /// Use Image I/O incremental decoding to produce progressive previews.
+        case incremental
+        /// Extract the embedded EXIF thumbnail if available, then stop.
+        case thumbnail
+        /// No previews are generated for partially downloaded data.
+        case disabled
+
+        /// Returns the default policy for the given data: `.incremental` for
+        /// progressive JPEGs and GIFs, `.disabled` for everything else.
+        public static func `default`(for data: Data) -> PreviewPolicy {
+            let type = AssetType(data)
+            if type == .gif {
+                return .incremental
+            }
+            if type == .jpeg && _isProgressiveJPEG(data) {
+                return .incremental
+            }
+            return .disabled
+        }
+
+        private static func _isProgressiveJPEG(_ data: Data) -> Bool {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let jfif = properties[kCGImagePropertyJFIFDictionary] as? [CFString: Any],
+                  let isProgressive = jfif[kCGImagePropertyJFIFIsProgressive] as? Bool else {
+                return false
+            }
+            return isProgressive
+        }
     }
 }

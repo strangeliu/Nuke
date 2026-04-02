@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015-2024 Alexander Grebenyuk (github.com/kean).
+// Copyright (c) 2015-2026 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
 import SwiftUI
@@ -35,7 +35,7 @@ struct ImageProcessingExtensions {
             return nil
         }
 #if canImport(UIKit)
-        let targetSize = targetSize.rotatedForOrientation(image.imageOrientation)
+        let targetSize = targetSize.rotatedForOrientation(CGImagePropertyOrientation(image.imageOrientation))
 #endif
         let scale = cgImage.size.getScale(targetSize: targetSize, contentMode: contentMode)
         guard scale < 1 || upscale else {
@@ -52,7 +52,7 @@ struct ImageProcessingExtensions {
             return nil
         }
 #if canImport(UIKit)
-        let targetSize = targetSize.rotatedForOrientation(image.imageOrientation)
+        let targetSize = targetSize.rotatedForOrientation(CGImagePropertyOrientation(image.imageOrientation))
 #endif
         let scale = cgImage.size.getScale(targetSize: targetSize, contentMode: .aspectFill)
         let scaledSize = cgImage.size.scaled(by: scale)
@@ -151,10 +151,10 @@ extension PlatformImage {
         return PlatformImage.make(cgImage: outputCGImage, source: self)
     }
 
-    /// Decompresses the input image by drawing in the the `CGContext`.
+    /// Decompresses the input image by drawing in the `CGContext`.
     func decompressed(isUsingPrepareForDisplay: Bool) -> PlatformImage? {
 #if os(iOS) || os(tvOS) || os(visionOS)
-        if isUsingPrepareForDisplay, #available(iOS 15.0, tvOS 15.0, *) {
+        if isUsingPrepareForDisplay {
             return preparingForDisplay()
         }
 #endif
@@ -165,7 +165,7 @@ extension PlatformImage {
     }
 }
 
-private extension CGContext {
+extension CGContext {
     static func make(_ image: CGImage, size: CGSize, alphaInfo: CGImageAlphaInfo? = nil) -> CGContext? {
         if let ctx = CGContext.make(image, size: size, alphaInfo: alphaInfo, colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()) {
             return ctx
@@ -277,16 +277,6 @@ private extension CGSize {
         }
     }
 
-    func rotatedForOrientation(_ imageOrientation: UIImage.Orientation) -> CGSize {
-        switch imageOrientation {
-        case .left, .leftMirrored, .right, .rightMirrored:
-            return CGSize(width: height, height: width) // Rotate 90 degrees
-        case .up, .upMirrored, .down, .downMirrored:
-            return self
-        @unknown default:
-            return self
-        }
-    }
 }
 #endif
 
@@ -386,16 +376,32 @@ func makeThumbnail(data: Data, options: ImageRequest.ThumbnailOptions, scale: CG
     }
 
     let maxPixelSize = getMaxPixelSize(for: source, options: options)
+    let flags = options.options
     let options = [
-        kCGImageSourceCreateThumbnailFromImageAlways: options.createThumbnailFromImageAlways,
-        kCGImageSourceCreateThumbnailFromImageIfAbsent: options.createThumbnailFromImageIfAbsent,
-        kCGImageSourceShouldCacheImmediately: options.shouldCacheImmediately,
-        kCGImageSourceCreateThumbnailWithTransform: options.createThumbnailWithTransform,
+        kCGImageSourceCreateThumbnailFromImageAlways: flags.contains(.createThumbnailFromImageAlways),
+        kCGImageSourceCreateThumbnailFromImageIfAbsent: flags.contains(.createThumbnailFromImageIfAbsent),
+        kCGImageSourceShouldCacheImmediately: flags.contains(.shouldCacheImmediately),
+        kCGImageSourceCreateThumbnailWithTransform: flags.contains(.createThumbnailWithTransform),
         kCGImageSourceThumbnailMaxPixelSize: maxPixelSize] as [CFString: Any]
     guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
         return nil
     }
+    // When `createThumbnailWithTransform` is enabled, ImageIO already bakes
+    // the EXIF orientation into the thumbnail pixels. Passing the original
+    // orientation to UIImage would apply it a second time (double rotation).
+    if flags.contains(.createThumbnailWithTransform) {
+#if canImport(UIKit)
+        return PlatformImage(cgImage: image, scale: scale, orientation: .up)
+#else
+        return PlatformImage(cgImage: image)
+#endif
+    }
+    return makeImage(from: image, source: source, scale: scale)
+}
 
+/// Creates a `PlatformImage` from a `CGImage` produced by a `CGImageSource`,
+/// reading EXIF orientation from the source properties.
+func makeImage(from cgImage: CGImage, source: CGImageSource, scale: CGFloat = 1.0) -> PlatformImage {
 #if canImport(UIKit)
     var orientation: UIImage.Orientation = .up
     if let imageProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [AnyHashable: Any],
@@ -403,33 +409,30 @@ func makeThumbnail(data: Data, options: ImageRequest.ThumbnailOptions, scale: CG
        let cgOrientation = CGImagePropertyOrientation(rawValue: orientationValue) {
         orientation = UIImage.Orientation(cgOrientation)
     }
-    return PlatformImage(cgImage: image, scale: scale, orientation: orientation)
+    return PlatformImage(cgImage: cgImage, scale: scale, orientation: orientation)
 #else
-    return PlatformImage(cgImage: image)
+    return PlatformImage(cgImage: cgImage)
 #endif
 }
 
 private func getMaxPixelSize(for source: CGImageSource, options thumbnailOptions: ImageRequest.ThumbnailOptions) -> CGFloat {
-    switch thumbnailOptions.targetSize {
-    case .fixed(let size):
-        return CGFloat(size)
-    case let .flexible(size, contentMode):
-        var targetSize = size.cgSize
-        let options = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
-              let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
-            return max(targetSize.width, targetSize.height)
-        }
-
-        let orientation = (properties[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init) ?? .up
-#if canImport(UIKit)
-        targetSize = targetSize.rotatedForOrientation(orientation)
-#endif
-
-        let imageSize = CGSize(width: width, height: height)
-        let scale = imageSize.getScale(targetSize: targetSize, contentMode: contentMode)
-        let size = imageSize.scaled(by: scale).rounded()
-        return max(size.width, size.height)
+    guard thumbnailOptions.options.contains(.flexible) else {
+        return CGFloat(thumbnailOptions.size.width)
     }
+    var targetSize = thumbnailOptions.size.cgSize
+    let contentMode = thumbnailOptions.contentMode
+    let options = [kCGImageSourceShouldCache: false] as CFDictionary
+    guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+          let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
+        return max(targetSize.width, targetSize.height)
+    }
+    let orientation = (properties[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init) ?? .up
+#if canImport(UIKit)
+    targetSize = targetSize.rotatedForOrientation(orientation)
+#endif
+    let imageSize = CGSize(width: width, height: height)
+    let scale = imageSize.getScale(targetSize: targetSize, contentMode: contentMode)
+    let size = imageSize.scaled(by: scale).rounded()
+    return max(size.width, size.height)
 }
