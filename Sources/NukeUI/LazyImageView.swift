@@ -216,7 +216,13 @@ public final class LazyImageView: _PlatformBaseView {
     /// Sets the given URL and immediately starts the download.
     public var url: URL? {
         get { request?.url }
-        set { request = newValue.map { ImageRequest(url: $0) } }
+        set {
+            if let newValue {
+                request = ImageRequest(url: newValue)
+            } else {
+                request = nil
+            }
+        }
     }
 
     /// Sets the given request and immediately starts the download.
@@ -233,10 +239,16 @@ public final class LazyImageView: _PlatformBaseView {
 
     /// Cancels current request and prepares the view for reuse.
     public func reset() {
+        reset(clearImage: true)
+    }
+
+    private func reset(clearImage: Bool) {
         cancel()
 
-        imageView.image = nil
-        imageView.isHidden = true
+        if clearImage {
+            if imageView.image != nil { imageView.image = nil }
+            if !imageView.isHidden { imageView.isHidden = true }
+        }
 
         customImageView?.removeFromSuperview()
 
@@ -244,6 +256,14 @@ public final class LazyImageView: _PlatformBaseView {
         setFailureViewHidden(true)
 
         isResetNeeded = false
+    }
+
+    private func resetOrDefer(clearImage: Bool = true) {
+        if isResetEnabled {
+            reset(clearImage: clearImage)
+        } else {
+            isResetNeeded = true
+        }
     }
 
     /// Cancels current request.
@@ -260,13 +280,8 @@ public final class LazyImageView: _PlatformBaseView {
 
         cancel()
 
-        if isResetEnabled {
-            reset()
-        } else {
-            isResetNeeded = true
-        }
-
         guard var request else {
+            resetOrDefer()
             handle(result: .failure(ImagePipeline.Error.imageRequestMissing), isSync: true)
             return
         }
@@ -278,15 +293,19 @@ public final class LazyImageView: _PlatformBaseView {
             request.priority = priority
         }
 
-        // Quick synchronous memory cache lookup
-        if let image = pipeline.cache[request] {
-            if image.isPreview {
-                display(image, isFromMemory: true) // Display progressive preview
-            } else {
-                let response = ImageResponse(container: image, request: request, cacheType: .memory)
-                handle(result: .success(response), isSync: true)
-                return
-            }
+        // Check cache before `reset()` so a hit can overwrite `imageView.image` directly.
+        let cachedImage = pipeline.cache[request]
+        if let image = cachedImage, !image.isPreview {
+            resetOrDefer(clearImage: false)
+            let response = ImageResponse(container: image, request: request, cacheType: .memory)
+            handle(result: .success(response), isSync: true)
+            return
+        }
+
+        resetOrDefer()
+
+        if let image = cachedImage, image.isPreview {
+            display(image, isFromMemory: true)
         }
 
         setPlaceholderViewHidden(false)
@@ -320,7 +339,10 @@ public final class LazyImageView: _PlatformBaseView {
     }
 
     private func handle(result: Result<ImageResponse, Error>, isSync: Bool) {
-        resetIfNeeded()
+        switch result {
+        case .success: resetIfNeeded(clearImage: false)
+        case .failure: resetIfNeeded()
+        }
         setPlaceholderViewHidden(true)
 
         switch result {
@@ -343,7 +365,7 @@ public final class LazyImageView: _PlatformBaseView {
     }
 
     private func display(_ container: ImageContainer, isFromMemory: Bool) {
-        resetIfNeeded()
+        resetIfNeeded(clearImage: false)
 
         if let view = makeImageView?(container) {
             addSubview(view)
@@ -351,7 +373,9 @@ public final class LazyImageView: _PlatformBaseView {
             customImageView = view
         } else {
             imageView.image = container.image
-            imageView.isHidden = false
+            if imageView.isHidden {
+                imageView.isHidden = false
+            }
         }
 
         if !isFromMemory, let transition = transition {
@@ -362,7 +386,8 @@ public final class LazyImageView: _PlatformBaseView {
     // MARK: Private (Placeholder View)
 
     private func setPlaceholderViewHidden(_ isHidden: Bool) {
-        placeholderView?.isHidden = isHidden
+        guard let placeholderView, placeholderView.isHidden != isHidden else { return }
+        placeholderView.isHidden = isHidden
     }
 
     private func setPlaceholderImage(_ placeholderImage: PlatformImage?) {
@@ -397,7 +422,8 @@ public final class LazyImageView: _PlatformBaseView {
     // MARK: Private (Failure View)
 
     private func setFailureViewHidden(_ isHidden: Bool) {
-        failureView?.isHidden = isHidden
+        guard let failureView, failureView.isHidden != isHidden else { return }
+        failureView.isHidden = isHidden
     }
 
     private func setFailureImage(_ failureImage: PlatformImage?) {
@@ -460,10 +486,9 @@ public final class LazyImageView: _PlatformBaseView {
         case fill
     }
 
-    private func resetIfNeeded() {
+    private func resetIfNeeded(clearImage: Bool = true) {
         if isResetNeeded {
-            reset()
-            isResetNeeded = false
+            reset(clearImage: clearImage)
         }
     }
 }

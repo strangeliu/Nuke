@@ -19,6 +19,42 @@
 
 # Nuke 13
 
+## Nuke 13.0.6
+
+*May 7, 2026*
+
+- Fix crashes on the Swift 5 boundary caused by dynamic actor isolation when invoking `Optional.map` with closures inferred as `@MainActor` in `LazyImage`, `LazyImageView`, `FetchImage`, and `loadImage(with:into:)`
+
+## Nuke 13.0.5
+
+*May 3, 2026*
+
+- Optimize `ImageCache` reads and writes for concurrent access patterns
+- Optimize `LazyImageView`, `LazyImage`, and `FetchImage` performance
+- Fix an issue with a deprecated closure-based `ImagePipeline` API sometimes invoked after cancellation
+
+## Nuke 13.0.4
+
+*Apr 26, 2026*
+
+- Add missing `@ImagePipelineActor` isolation to the new `willLoadData` method in `ImagePipeline.Delegate` to avoid thread hops
+- Minor other performance improvements
+
+## Nuke 13.0.3
+
+*Apr 26, 2026*
+
+- Minor performance optimizations
+- Eliminate a few `@unchecked Sendable` annotations
+- Deprecate `ImagePipeline.Configuration.maximumDecodedImageSize` and `ImageDecodingContext.maximumDecodedImageSize`. The automatic downscaling implementation has been removed; setting these values has no effect. Use `ImageRequest.ThumbnailOptions` to control decoded image size on a per-request basis
+
+## Nuke 13.0.2
+
+*Apr 14, 2026*
+
+- Fix `ImageDecoders.Default` double-applying EXIF orientation when downscaling images that exceed `maximumDecodedImageSize`
+- Fix the default `maximumDecodedImageSize` being applied too aggressively
+
 ## Nuke 13.0.1
 
 *Mar 29, 2026*
@@ -1451,7 +1487,7 @@ All the documentation for Nuke was rewritten from scratch in Nuke 8. It's now mo
 
 <img width="1158" alt="Screenshot 2019-06-11 at 22 31 18" src="https://user-images.githubusercontent.com/1567433/59304491-aacd2700-8c98-11e9-9630-293d27545b1a.png">
 
-The screenshots come the the **reworked demo** project. It gained new demos including *Image Processing* demo and also a way to change `ImagePipeline` configuration in runtime.
+The screenshots come from the **reworked demo** project. It gained new demos including *Image Processing* demo and also a way to change `ImagePipeline` configuration in runtime.
 
 ### Misc
 

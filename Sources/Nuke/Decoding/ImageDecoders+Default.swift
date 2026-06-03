@@ -31,7 +31,6 @@ extension ImageDecoders {
         private var scale: CGFloat = 1.0
         private var thumbnail: ImageRequest.ThumbnailOptions?
         private(set) var previewPolicy: ImagePipeline.PreviewPolicy = .incremental
-        private var maximumDecodedImageSize: Int?
         private let lock = NSLock()
 
         /// Returns `true` when thumbnail decoding is requested, because
@@ -43,12 +42,11 @@ extension ImageDecoders {
         public init() { }
 
         /// Initializes the decoder from the given decoding context, reading the
-        /// request's scale, thumbnail options, preview policy, and size limit.
+        /// request's scale, thumbnail options, and preview policy.
         public init?(context: ImageDecodingContext) {
             self.scale = CGFloat(context.request.scale)
             self.thumbnail = context.request.thumbnail
             self.previewPolicy = context.previewPolicy
-            self.maximumDecodedImageSize = context.maximumDecodedImageSize
         }
 
         public func decode(_ data: Data) throws -> ImageContainer {
@@ -59,7 +57,7 @@ extension ImageDecoders {
                 if let thumbnail {
                     return makeThumbnail(data: data, options: thumbnail, scale: scale)
                 }
-                return _decodeDownscalingIfNeeded(data) ?? ImageDecoders.Default._decode(data, scale: scale)
+                return ImageDecoders.Default._decode(data, scale: scale)
             }
             guard let image = makeImage() else {
                 throw ImageDecodingError.unknown
@@ -72,9 +70,6 @@ extension ImageDecoders {
             }
             if numberOfScans > 0 {
                 container.userInfo[.scanNumberKey] = numberOfScans
-            }
-            if thumbnail != nil {
-                container.userInfo[.isThumbnailKey] = true
             }
             return container
         }
@@ -188,39 +183,5 @@ extension ImageDecoders.Default {
 #else
         return UIImage(cgImage: cgImage, scale: scale, orientation: .up)
 #endif
-    }
-
-    /// Decodes the image at a reduced resolution if the estimated decoded
-    /// bitmap size exceeds `maximumDecodedImageSize`. Returns `nil` when
-    /// downscaling is not needed (or disabled).
-    private func _decodeDownscalingIfNeeded(_ data: Data) -> PlatformImage? {
-        guard let limit = maximumDecodedImageSize, limit > 0 else { return nil }
-
-        let bytesPerPixel = 4
-        let limitPixels = limit / bytesPerPixel
-
-        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
-            return nil
-        }
-
-        let totalPixels = width * height
-        guard totalPixels > limitPixels else { return nil }
-
-        let ratio = sqrt(Double(limitPixels) / Double(totalPixels))
-        let maxPixelSize = Int(ratio * Double(max(width, height)))
-
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-        ]
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-            return nil
-        }
-        return makeImage(from: cgImage, source: source, scale: scale)
     }
 }

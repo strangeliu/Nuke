@@ -21,7 +21,7 @@ public struct LazyImage<Content: View>: View {
 
     private var context: LazyImageContext?
     private var makeContent: ((LazyImageState) -> Content)?
-//    private var transaction: Transaction
+    private var transaction: Transaction
     private var pipeline: ImagePipeline = .shared
     private var onStart: (@MainActor @Sendable (ImageTask) -> Void)?
     private var onDisappearBehavior: DisappearBehavior? = .cancel
@@ -34,7 +34,11 @@ public struct LazyImage<Content: View>: View {
     /// - Parameters:
     ///   - url: The image URL.
     public init(url: URL?) where Content == Image {
-        self.init(request: url.map { ImageRequest(url: $0) })
+        if let url {
+            self.init(request: ImageRequest(url: url))
+        } else {
+            self.init(request: nil)
+        }
     }
 
     /// Loads and displays an image using `SwiftUI.Image`.
@@ -42,8 +46,10 @@ public struct LazyImage<Content: View>: View {
     /// - Parameters:
     ///   - request: The image request.
     public init(request: ImageRequest?) where Content == Image {
-        self.context = request.map(LazyImageContext.init)
-//        self.transaction = Transaction(animation: nil)
+        if let request {
+            self.context = LazyImageContext(request: request)
+        }
+        self.transaction = Transaction(animation: nil)
     }
 
     /// Loads an image and displays custom content for each state.
@@ -51,10 +57,14 @@ public struct LazyImage<Content: View>: View {
     /// See also ``init(request:transaction:content:)``
     public init(
         url: URL?,
-//        transaction: Transaction = Transaction(animation: nil),
+        transaction: Transaction = Transaction(animation: nil),
         @ViewBuilder content: @escaping (LazyImageState) -> Content
     ) {
-        self.init(request: url.map { ImageRequest(url: $0) }, content: content)
+        if let url {
+            self.init(request: ImageRequest(url: url), transaction: transaction, content: content)
+        } else {
+            self.init(request: nil, transaction: transaction, content: content)
+        }
     }
 
     /// Loads an image and displays custom content for each state.
@@ -77,11 +87,13 @@ public struct LazyImage<Content: View>: View {
     /// ```
     public init(
         request: ImageRequest?,
-//        transaction: Transaction = Transaction(animation: nil),
+        transaction: Transaction = Transaction(animation: nil),
         @ViewBuilder content: @escaping (LazyImageState) -> Content
     ) {
-        self.context = request.map { LazyImageContext(request: $0) }
-//        self.transaction = transaction
+        if let request {
+            self.context = LazyImageContext(request: request)
+        }
+        self.transaction = transaction
         self.makeContent = content
     }
 
@@ -93,10 +105,6 @@ public struct LazyImage<Content: View>: View {
     /// own processors. The request's processors always take priority.
     public consuming func processors(_ processors: [any ImageProcessing]?) -> Self {
         map { $0.context?.request.processors = processors ?? [] }
-    }
-    
-    public func processors(_ processors: (any ImageProcessing)...) -> Self {
-        map { $0.context?.request.processors = processors }
     }
 
     /// Sets the priority of the requests.
@@ -167,7 +175,7 @@ public struct LazyImage<Content: View>: View {
     }
 
     private func onAppear() {
-//        viewModel.transaction = transaction
+        viewModel.transaction = transaction
         viewModel.pipeline = pipeline
         viewModel.onStart = onStart
         viewModel.onCompletion = onCompletion

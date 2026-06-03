@@ -5,7 +5,7 @@
 import Foundation
 
 /// Receives data from ``TaskLoadImageData`` and decodes it as it arrives.
-final class TaskFetchOriginalImage: AsyncPipelineTask<ImageResponse>, @unchecked Sendable {
+final class TaskFetchOriginalImage: AsyncPipelineTask<ImageResponse> {
     private var decoder: (any ImageDecoding)?
     private var lastPreviewTime: CFAbsoluteTime?
 
@@ -41,7 +41,6 @@ final class TaskFetchOriginalImage: AsyncPipelineTask<ImageResponse>, @unchecked
         }
 
         var decodingContext = ImageDecodingContext(request: request, data: data, isCompleted: isCompleted, urlResponse: urlResponse)
-        decodingContext.maximumDecodedImageSize = pipeline.configuration.maximumDecodedImageSize
         if !isCompleted {
             decodingContext.previewPolicy = pipeline.delegate.previewPolicy(for: decodingContext, pipeline: pipeline)
         }
